@@ -1,212 +1,178 @@
-{
- "cells": [
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "id": "800e1f1a",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "import logging\n",
-    "from typing import Dict, List, Optional\n",
-    "from datetime import datetime, timezone\n",
-    "from sqlalchemy.orm import Session\n",
-    "\n",
-    "from collector.yandex_client import YandexTaxiClient\n",
-    "from database import crud, models\n",
-    "from database.session import SessionLocal\n",
-    "from shared.config import settings\n",
-    "\n",
-    "logger = logging.getLogger(__name__)\n",
-    "\n",
-    "class DataCollector:\n",
-    "    \"\"\"Сборщик данных из Яндекс.Такси\"\"\"\n",
-    "    \n",
-    "    def __init__(self):\n",
-    "        self.client = YandexTaxiClient(\n",
-    "            api_key=settings.YA_API_KEY,\n",
-    "            client_id=settings.YA_CLIENT_ID,\n",
-    "            park_id=settings.YA_PARK_ID\n",
-    "        )\n",
-    "        self.days_new_driver_threshold = settings.DAYS_NEW_DRIVER_THRESHOLD\n",
-    "        self.days_transactions_back = settings.DAYS_TRANSACTIONS_BACK\n",
-    "        \n",
-    "    def update_drivers_list(self, db: Session, api_drivers: List[Dict]) -> Dict:\n",
-    "        \"\"\"\n",
-    "        Обновляет список водителей (ваша оригинальная логика)\n",
-    "        \"\"\"\n",
-    "        now_utc = datetime.now(timezone.utc)\n",
-    "        new_count = 0\n",
-    "        status_updated = 0\n",
-    "        \n",
-    "        for api_driver in api_drivers:\n",
-    "            driver_profile = api_driver.get('driver_profile', {})\n",
-    "            account = api_driver.get('account', {}) or api_driver.get('accounts', [{}])[0] if api_driver.get('accounts') else {}\n",
-    "            current_status = api_driver.get('current_status', {})\n",
-    "            \n",
-    "            driver_id = driver_profile.get('id', '')\n",
-    "            if not driver_id:\n",
-    "                continue\n",
-    "            \n",
-    "            work_status = driver_profile.get('work_status', '')\n",
-    "            \n",
-    "            # Проверяем, существует ли водитель\n",
-    "            existing = crud.get_driver(db, driver_id)\n",
-    "            \n",
-    "            driver_data = {\n",
-    "                'driver_id': driver_id,\n",
-    "                'first_name': driver_profile.get('first_name', ''),\n",
-    "                'last_name': driver_profile.get('last_name', ''),\n",
-    "                'created_date': driver_profile.get('created_date', ''),\n",
-    "                'work_status': work_status,\n",
-    "                'balance': account.get('balance', ''),\n",
-    "                'currency': account.get('currency', ''),\n",
-    "                'current_status': current_status.get('status', ''),\n",
-    "                'last_transaction_date': account.get('last_transaction_date', '')\n",
-    "            }\n",
-    "            \n",
-    "            if not existing:\n",
-    "                # Новый водитель\n",
-    "                driver_data['last_status_updated'] = now_utc\n",
-    "                crud.save_driver(db, driver_data)\n",
-    "                new_count += 1\n",
-    "                logger.info(f\"New driver added: {driver_data['first_name']} {driver_data['last_name']}\")\n",
-    "            else:\n",
-    "                # Существующий - проверяем нужно ли обновить статус\n",
-    "                needs_update = False\n",
-    "                \n",
-    "                if existing.work_status != work_status:\n",
-    "                    needs_update = True\n",
-    "                elif existing.last_status_updated:\n",
-    "                    days_since_update = (now_utc - existing.last_status_updated).days\n",
-    "                    if work_status == 'working' and days_since_update >= settings.DAYS_STATUS_UPDATE_WORKING:\n",
-    "                        needs_update = True\n",
-    "                    elif work_status == 'not_working' and days_since_update >= settings.DAYS_STATUS_UPDATE_NOT_WORKING:\n",
-    "                        needs_update = True\n",
-    "                \n",
-    "                if needs_update:\n",
-    "                    driver_data['last_status_updated'] = now_utc\n",
-    "                    crud.save_driver(db, driver_data)\n",
-    "                    status_updated += 1\n",
-    "                    logger.info(f\"Status updated for {driver_data['first_name']}: {work_status}\")\n",
-    "        \n",
-    "        return {'new': new_count, 'updated': status_updated}\n",
-    "    \n",
-    "    def update_orders_for_drivers(self, db: Session, drivers: List[models.Driver]) -> Dict:\n",
-    "        \"\"\"\n",
-    "        Обновляет количество заказов для переданных водителей\n",
-    "        \"\"\"\n",
-    "        updated_count = 0\n",
-    "        errors = []\n",
-    "        \n",
-    "        for driver in drivers:\n",
-    "            logger.info(f\"Updating orders for {driver.first_name} {driver.last_name}\")\n",
-    "            \n",
-    "            result = self.client.get_driver_transactions(\n",
-    "                driver.driver_id,\n",
-    "                self.days_transactions_back\n",
-    "            )\n",
-    "            \n",
-    "            if result['success']:\n",
-    "                new_orders = result['orders_count']\n",
-    "                \n",
-    "                # Ваша логика: обновляем только если новое значение >= старого\n",
-    "                if new_orders >= driver.orders_count:\n",
-    "                    crud.update_driver_orders(db, driver.driver_id, new_orders)\n",
-    "                    updated_count += 1\n",
-    "                    logger.info(f\"  Orders: {driver.orders_count} -> {new_orders}\")\n",
-    "                else:\n",
-    "                    # Логируем ошибку, но не обновляем\n",
-    "                    error_msg = f\"Orders decreased for {driver.driver_id}: {driver.orders_count} -> {new_orders}\"\n",
-    "                    logger.warning(error_msg)\n",
-    "                    errors.append(error_msg)\n",
-    "            else:\n",
-    "                error_msg = f\"API error for {driver.driver_id}: {result.get('error')}\"\n",
-    "                logger.error(error_msg)\n",
-    "                errors.append(error_msg)\n",
-    "        \n",
-    "        return {'updated': updated_count, 'errors': errors}\n",
-    "    \n",
-    "    def run_full_update(self) -> Dict:\n",
-    "        \"\"\"\n",
-    "        Запускает полный цикл обновления\n",
-    "        \"\"\"\n",
-    "        start_time = datetime.utcnow()\n",
-    "        db = SessionLocal()\n",
-    "        \n",
-    "        try:\n",
-    "            logger.info(\"Starting full data collection...\")\n",
-    "            \n",
-    "            # Шаг 1: Загружаем водителей из API\n",
-    "            api_drivers = self.client.fetch_all_drivers()\n",
-    "            if not api_drivers:\n",
-    "                raise Exception(\"No drivers fetched from API\")\n",
-    "            \n",
-    "            # Шаг 2: Обновляем список водителей\n",
-    "            drivers_result = self.update_drivers_list(db, api_drivers)\n",
-    "            \n",
-    "            # Шаг 3: Получаем водителей для обновления заказов\n",
-    "            drivers_to_update = crud.get_drivers_for_update(db, max_count=100)\n",
-    "            \n",
-    "            # Шаг 4: Обновляем заказы\n",
-    "            orders_result = {'updated': 0, 'errors': []}\n",
-    "            if drivers_to_update:\n",
-    "                orders_result = self.update_orders_for_drivers(db, drivers_to_update)\n",
-    "            \n",
-    "            # Шаг 5: Сохраняем лог\n",
-    "            crud.create_collection_log(\n",
-    "                db,\n",
-    "                status='success',\n",
-    "                new_drivers_added=drivers_result['new'],\n",
-    "                status_updated=drivers_result['updated'],\n",
-    "                orders_updated=orders_result['updated'],\n",
-    "                api_calls_used=len(api_drivers) // 500 + 1 + len(drivers_to_update),\n",
-    "                errors=orders_result['errors']\n",
-    "            )\n",
-    "            \n",
-    "            return {\n",
-    "                'success': True,\n",
-    "                'new_drivers': drivers_result['new'],\n",
-    "                'status_updates': drivers_result['updated'],\n",
-    "                'orders_updated': orders_result['updated'],\n",
-    "                'errors': orders_result['errors']\n",
-    "            }\n",
-    "            \n",
-    "        except Exception as e:\n",
-    "            logger.error(f\"Collection failed: {e}\")\n",
-    "            crud.create_collection_log(\n",
-    "                db,\n",
-    "                status='failed',\n",
-    "                error_message=str(e)\n",
-    "            )\n",
-    "            return {\n",
-    "                'success': False,\n",
-    "                'error': str(e)\n",
-    "            }\n",
-    "        finally:\n",
-    "            db.close()"
-   ]
-  }
- ],
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python 3 (ipykernel)",
-   "language": "python",
-   "name": "python3"
-  },
-  "language_info": {
-   "codemirror_mode": {
-    "name": "ipython",
-    "version": 3
-   },
-   "file_extension": ".py",
-   "mimetype": "text/x-python",
-   "name": "python",
-   "nbconvert_exporter": "python",
-   "pygments_lexer": "ipython3",
-   "version": "3.11.4"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 5
-}
+import logging
+from typing import Dict, List, Optional
+from datetime import datetime, timezone
+from sqlalchemy.orm import Session
+
+from collector.yandex_client import YandexTaxiClient
+from database import crud, models
+from database.session import SessionLocal
+from shared.config import settings
+
+logger = logging.getLogger(__name__)
+
+class DataCollector:
+    """Сборщик данных из Яндекс.Такси"""
+    
+    def __init__(self):
+        self.client = YandexTaxiClient(
+            api_key=settings.YA_API_KEY,
+            client_id=settings.YA_CLIENT_ID,
+            park_id=settings.YA_PARK_ID
+        )
+        self.days_new_driver_threshold = settings.DAYS_NEW_DRIVER_THRESHOLD
+        self.days_transactions_back = settings.DAYS_TRANSACTIONS_BACK
+        
+    def update_drivers_list(self, db: Session, api_drivers: List[Dict]) -> Dict:
+        """
+        Обновляет список водителей (ваша оригинальная логика)
+        """
+        now_utc = datetime.now(timezone.utc)
+        new_count = 0
+        status_updated = 0
+        
+        for api_driver in api_drivers:
+            driver_profile = api_driver.get('driver_profile', {})
+            account = api_driver.get('account', {}) or api_driver.get('accounts', [{}])[0] if api_driver.get('accounts') else {}
+            current_status = api_driver.get('current_status', {})
+            
+            driver_id = driver_profile.get('id', '')
+            if not driver_id:
+                continue
+            
+            work_status = driver_profile.get('work_status', '')
+            
+            # Проверяем, существует ли водитель
+            existing = crud.get_driver(db, driver_id)
+            
+            driver_data = {
+                'driver_id': driver_id,
+                'first_name': driver_profile.get('first_name', ''),
+                'last_name': driver_profile.get('last_name', ''),
+                'created_date': driver_profile.get('created_date', ''),
+                'work_status': work_status,
+                'balance': account.get('balance', ''),
+                'currency': account.get('currency', ''),
+                'current_status': current_status.get('status', ''),
+                'last_transaction_date': account.get('last_transaction_date', '')
+            }
+            
+            if not existing:
+                # Новый водитель
+                driver_data['last_status_updated'] = now_utc
+                crud.save_driver(db, driver_data)
+                new_count += 1
+                logger.info(f"New driver added: {driver_data['first_name']} {driver_data['last_name']}")
+            else:
+                # Существующий - проверяем нужно ли обновить статус
+                needs_update = False
+                
+                if existing.work_status != work_status:
+                    needs_update = True
+                elif existing.last_status_updated:
+                    days_since_update = (now_utc - existing.last_status_updated).days
+                    if work_status == 'working' and days_since_update >= settings.DAYS_STATUS_UPDATE_WORKING:
+                        needs_update = True
+                    elif work_status == 'not_working' and days_since_update >= settings.DAYS_STATUS_UPDATE_NOT_WORKING:
+                        needs_update = True
+                
+                if needs_update:
+                    driver_data['last_status_updated'] = now_utc
+                    crud.save_driver(db, driver_data)
+                    status_updated += 1
+                    logger.info(f"Status updated for {driver_data['first_name']}: {work_status}")
+        
+        return {'new': new_count, 'updated': status_updated}
+    
+    def update_orders_for_drivers(self, db: Session, drivers: List[models.Driver]) -> Dict:
+        """
+        Обновляет количество заказов для переданных водителей
+        """
+        updated_count = 0
+        errors = []
+        
+        for driver in drivers:
+            logger.info(f"Updating orders for {driver.first_name} {driver.last_name}")
+            
+            result = self.client.get_driver_transactions(
+                driver.driver_id,
+                self.days_transactions_back
+            )
+            
+            if result['success']:
+                new_orders = result['orders_count']
+                
+                # Ваша логика: обновляем только если новое значение >= старого
+                if new_orders >= driver.orders_count:
+                    crud.update_driver_orders(db, driver.driver_id, new_orders)
+                    updated_count += 1
+                    logger.info(f"  Orders: {driver.orders_count} -> {new_orders}")
+                else:
+                    # Логируем ошибку, но не обновляем
+                    error_msg = f"Orders decreased for {driver.driver_id}: {driver.orders_count} -> {new_orders}"
+                    logger.warning(error_msg)
+                    errors.append(error_msg)
+            else:
+                error_msg = f"API error for {driver.driver_id}: {result.get('error')}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+        
+        return {'updated': updated_count, 'errors': errors}
+    
+    def run_full_update(self) -> Dict:
+        """
+        Запускает полный цикл обновления
+        """
+        start_time = datetime.utcnow()
+        db = SessionLocal()
+        
+        try:
+            logger.info("Starting full data collection...")
+            
+            # Шаг 1: Загружаем водителей из API
+            api_drivers = self.client.fetch_all_drivers()
+            if not api_drivers:
+                raise Exception("No drivers fetched from API")
+            
+            # Шаг 2: Обновляем список водителей
+            drivers_result = self.update_drivers_list(db, api_drivers)
+            
+            # Шаг 3: Получаем водителей для обновления заказов
+            drivers_to_update = crud.get_drivers_for_update(db, max_count=100)
+            
+            # Шаг 4: Обновляем заказы
+            orders_result = {'updated': 0, 'errors': []}
+            if drivers_to_update:
+                orders_result = self.update_orders_for_drivers(db, drivers_to_update)
+            
+            # Шаг 5: Сохраняем лог
+            crud.create_collection_log(
+                db,
+                status='success',
+                new_drivers_added=drivers_result['new'],
+                status_updated=drivers_result['updated'],
+                orders_updated=orders_result['updated'],
+                api_calls_used=len(api_drivers) // 500 + 1 + len(drivers_to_update),
+                errors=orders_result['errors']
+            )
+            
+            return {
+                'success': True,
+                'new_drivers': drivers_result['new'],
+                'status_updates': drivers_result['updated'],
+                'orders_updated': orders_result['updated'],
+                'errors': orders_result['errors']
+            }
+            
+        except Exception as e:
+            logger.error(f"Collection failed: {e}")
+            crud.create_collection_log(
+                db,
+                status='failed',
+                error_message=str(e)
+            )
+            return {
+                'success': False,
+                'error': str(e)
+            }
+        finally:
+            db.close()
