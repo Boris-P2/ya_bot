@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, func  # ← добавляем or_ и func
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import logging
@@ -51,21 +52,16 @@ def get_drivers_for_update(db: Session, max_count: int = 100) -> List[models.Dri
     """Получить водителей, которым нужно обновить заказы"""
     now = datetime.utcnow()
     
-    # Логика определения приоритета:
-    # 1. Новые водители (менее 30 дней)
-    # 2. Те, у кого last_updated > 3 дня
-    # 3. Исключаем уволенных
-    
     cutoff_date = now - timedelta(days=30)
     stale_date = now - timedelta(days=3)
     
     drivers = db.query(models.Driver).filter(
         models.Driver.work_status != 'fired',
-        db.or_(
-            models.Driver.created_at >= cutoff_date,  # Новые водители
-            db.or_(
+        or_(
+            models.Driver.created_at >= cutoff_date,
+            or_(
                 models.Driver.last_updated.is_(None),
-                models.Driver.last_updated <= stale_date  # Давно не обновлялись
+                models.Driver.last_updated <= stale_date
             )
         )
     ).limit(max_count).all()
