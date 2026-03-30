@@ -1,179 +1,145 @@
-{
- "cells": [
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "id": "378ef774",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "import requests\n",
-    "import time\n",
-    "import logging\n",
-    "from typing import Dict, List, Optional, Any\n",
-    "from datetime import datetime, timedelta, timezone\n",
-    "\n",
-    "logger = logging.getLogger(__name__)\n",
-    "\n",
-    "class YandexTaxiClient:\n",
-    "    \"\"\"Клиент для работы с API Яндекс.Такси\"\"\"\n",
-    "    \n",
-    "    def __init__(self, api_key: str, client_id: str, park_id: str):\n",
-    "        self.api_key = api_key\n",
-    "        self.client_id = client_id\n",
-    "        self.park_id = park_id\n",
-    "        self.api_url_drivers = \"https://fleet-api.taxi.yandex.net/v1/parks/driver-profiles/list\"\n",
-    "        self.api_url_transactions = \"https://fleet-api.taxi.yandex.net/v2/parks/driver-profiles/transactions/list\"\n",
-    "        \n",
-    "    def fetch_drivers_page(self, offset: int = 0, limit: int = 500) -> Optional[Dict]:\n",
-    "        \"\"\"Загружает одну страницу водителей\"\"\"\n",
-    "        data = {\n",
-    "            \"query\": {\n",
-    "                \"park\": {\n",
-    "                    \"id\": self.park_id\n",
-    "                }\n",
-    "            },\n",
-    "            \"limit\": min(limit, 1000),\n",
-    "            \"offset\": offset,\n",
-    "            \"fields\": {\n",
-    "                \"driver_profile\": [\"id\", \"first_name\", \"last_name\", \"created_date\", \"work_status\"],\n",
-    "                \"account\": [\"last_transaction_date\", \"balance\", \"currency\"],\n",
-    "                \"current_status\": [\"status\"]\n",
-    "            }\n",
-    "        }\n",
-    "        \n",
-    "        headers = {\n",
-    "            \"X-API-Key\": self.api_key,\n",
-    "            \"X-Client-ID\": self.client_id,\n",
-    "            \"Content-Type\": \"application/json\"\n",
-    "        }\n",
-    "        \n",
-    "        try:\n",
-    "            response = requests.post(self.api_url_drivers, headers=headers, json=data, timeout=30)\n",
-    "            response.raise_for_status()\n",
-    "            return response.json()\n",
-    "        except Exception as e:\n",
-    "            logger.error(f\"Error fetching drivers page: {e}\")\n",
-    "            return None\n",
-    "    \n",
-    "    def fetch_all_drivers(self) -> List[Dict]:\n",
-    "        \"\"\"Загружает всех водителей с пагинацией\"\"\"\n",
-    "        all_drivers = []\n",
-    "        offset = 0\n",
-    "        limit = 500\n",
-    "        page = 1\n",
-    "        \n",
-    "        logger.info(f\"Fetching all drivers from Yandex API...\")\n",
-    "        \n",
-    "        while True:\n",
-    "            logger.debug(f\"Fetching page {page} (offset: {offset})\")\n",
-    "            result = self.fetch_drivers_page(offset=offset, limit=limit)\n",
-    "            \n",
-    "            if not result:\n",
-    "                break\n",
-    "            \n",
-    "            drivers = result.get('driver_profiles', [])\n",
-    "            total = result.get('total', 0)\n",
-    "            \n",
-    "            if not drivers:\n",
-    "                break\n",
-    "            \n",
-    "            all_drivers.extend(drivers)\n",
-    "            logger.info(f\"Fetched {len(drivers)} drivers (total: {len(all_drivers)}/{total})\")\n",
-    "            \n",
-    "            if len(drivers) < limit or len(all_drivers) >= total:\n",
-    "                break\n",
-    "                \n",
-    "            offset += limit\n",
-    "            page += 1\n",
-    "            time.sleep(0.5)\n",
-    "        \n",
-    "        logger.info(f\"Total drivers fetched: {len(all_drivers)}\")\n",
-    "        return all_drivers\n",
-    "    \n",
-    "    def get_driver_transactions(self, driver_id: str, days_back: int = 30) -> Dict[str, Any]:\n",
-    "        \"\"\"Получает транзакции водителя и возвращает количество уникальных заказов\"\"\"\n",
-    "        to_date = datetime.now(timezone.utc)\n",
-    "        from_date = to_date - timedelta(days=days_back)\n",
-    "        \n",
-    "        from_date_str = from_date.strftime('%Y-%m-%dT%H:%M:%SZ')\n",
-    "        to_date_str = to_date.strftime('%Y-%m-%dT%H:%M:%SZ')\n",
-    "        \n",
-    "        all_transactions = []\n",
-    "        cursor = None\n",
-    "        \n",
-    "        while True:\n",
-    "            payload = {\n",
-    "                \"query\": {\n",
-    "                    \"park\": {\n",
-    "                        \"id\": self.park_id,\n",
-    "                        \"driver_profile\": {\"id\": driver_id},\n",
-    "                        \"transaction\": {\"event_at\": {\"from\": from_date_str, \"to\": to_date_str}}\n",
-    "                    }\n",
-    "                },\n",
-    "                \"limit\": 1000\n",
-    "            }\n",
-    "            if cursor:\n",
-    "                payload[\"cursor\"] = cursor\n",
-    "            \n",
-    "            headers = {\n",
-    "                \"X-API-Key\": self.api_key,\n",
-    "                \"X-Client-ID\": self.client_id,\n",
-    "                \"Content-Type\": \"application/json\"\n",
-    "            }\n",
-    "            \n",
-    "            try:\n",
-    "                response = requests.post(self.api_url_transactions, headers=headers, json=payload, timeout=30)\n",
-    "                response.raise_for_status()\n",
-    "                \n",
-    "                result = response.json()\n",
-    "                transactions = result.get('transactions', [])\n",
-    "                if not transactions:\n",
-    "                    break\n",
-    "                \n",
-    "                all_transactions.extend(transactions)\n",
-    "                cursor = result.get('cursor')\n",
-    "                if not cursor:\n",
-    "                    break\n",
-    "                    \n",
-    "            except Exception as e:\n",
-    "                logger.error(f\"Error fetching transactions for {driver_id}: {e}\")\n",
-    "                return {\"success\": False, \"error\": str(e), \"orders_count\": 0}\n",
-    "        \n",
-    "        # Извлекаем уникальные order_id\n",
-    "        unique_orders = set()\n",
-    "        for t in all_transactions:\n",
-    "            order_id = t.get('order_id')\n",
-    "            if order_id:\n",
-    "                unique_orders.add(order_id)\n",
-    "        \n",
-    "        return {\n",
-    "            \"success\": True,\n",
-    "            \"transactions_count\": len(all_transactions),\n",
-    "            \"orders_count\": len(unique_orders)\n",
-    "        }"
-   ]
-  }
- ],
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python 3 (ipykernel)",
-   "language": "python",
-   "name": "python3"
-  },
-  "language_info": {
-   "codemirror_mode": {
-    "name": "ipython",
-    "version": 3
-   },
-   "file_extension": ".py",
-   "mimetype": "text/x-python",
-   "name": "python",
-   "nbconvert_exporter": "python",
-   "pygments_lexer": "ipython3",
-   "version": "3.11.4"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 5
-}
+import requests
+import time
+import logging
+from typing import Dict, List, Optional, Any
+from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger(__name__)
+
+class YandexTaxiClient:
+    """Клиент для работы с API Яндекс.Такси"""
+    
+    def __init__(self, api_key: str, client_id: str, park_id: str):
+        self.api_key = api_key
+        self.client_id = client_id
+        self.park_id = park_id
+        self.api_url_drivers = "https://fleet-api.taxi.yandex.net/v1/parks/driver-profiles/list"
+        self.api_url_transactions = "https://fleet-api.taxi.yandex.net/v2/parks/driver-profiles/transactions/list"
+        
+    def fetch_drivers_page(self, offset: int = 0, limit: int = 500) -> Optional[Dict]:
+        """Загружает одну страницу водителей"""
+        data = {
+            "query": {
+                "park": {
+                    "id": self.park_id
+                }
+            },
+            "limit": min(limit, 1000),
+            "offset": offset,
+            "fields": {
+                "driver_profile": ["id", "first_name", "last_name", "created_date", "work_status"],
+                "account": ["last_transaction_date", "balance", "currency"],
+                "current_status": ["status"]
+            }
+        }
+        
+        headers = {
+            "X-API-Key": self.api_key,
+            "X-Client-ID": self.client_id,
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            response = requests.post(self.api_url_drivers, headers=headers, json=data, timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error fetching drivers page: {e}")
+            return None
+    
+    def fetch_all_drivers(self) -> List[Dict]:
+        """Загружает всех водителей с пагинацией"""
+        all_drivers = []
+        offset = 0
+        limit = 500
+        page = 1
+        
+        logger.info(f"Fetching all drivers from Yandex API...")
+        
+        while True:
+            logger.debug(f"Fetching page {page} (offset: {offset})")
+            result = self.fetch_drivers_page(offset=offset, limit=limit)
+            
+            if not result:
+                break
+            
+            drivers = result.get('driver_profiles', [])
+            total = result.get('total', 0)
+            
+            if not drivers:
+                break
+            
+            all_drivers.extend(drivers)
+            logger.info(f"Fetched {len(drivers)} drivers (total: {len(all_drivers)}/{total})")
+            
+            if len(drivers) < limit or len(all_drivers) >= total:
+                break
+                
+            offset += limit
+            page += 1
+            time.sleep(0.5)
+        
+        logger.info(f"Total drivers fetched: {len(all_drivers)}")
+        return all_drivers
+    
+    def get_driver_transactions(self, driver_id: str, days_back: int = 30) -> Dict[str, Any]:
+        """Получает транзакции водителя и возвращает количество уникальных заказов"""
+        to_date = datetime.now(timezone.utc)
+        from_date = to_date - timedelta(days=days_back)
+        
+        from_date_str = from_date.strftime('%Y-%m-%dT%H:%M:%SZ')
+        to_date_str = to_date.strftime('%Y-%m-%dT%H:%M:%SZ')
+        
+        all_transactions = []
+        cursor = None
+        
+        while True:
+            payload = {
+                "query": {
+                    "park": {
+                        "id": self.park_id,
+                        "driver_profile": {"id": driver_id},
+                        "transaction": {"event_at": {"from": from_date_str, "to": to_date_str}}
+                    }
+                },
+                "limit": 1000
+            }
+            if cursor:
+                payload["cursor"] = cursor
+            
+            headers = {
+                "X-API-Key": self.api_key,
+                "X-Client-ID": self.client_id,
+                "Content-Type": "application/json"
+            }
+            
+            try:
+                response = requests.post(self.api_url_transactions, headers=headers, json=payload, timeout=30)
+                response.raise_for_status()
+                
+                result = response.json()
+                transactions = result.get('transactions', [])
+                if not transactions:
+                    break
+                
+                all_transactions.extend(transactions)
+                cursor = result.get('cursor')
+                if not cursor:
+                    break
+                    
+            except Exception as e:
+                logger.error(f"Error fetching transactions for {driver_id}: {e}")
+                return {"success": False, "error": str(e), "orders_count": 0}
+        
+        # Извлекаем уникальные order_id
+        unique_orders = set()
+        for t in all_transactions:
+            order_id = t.get('order_id')
+            if order_id:
+                unique_orders.add(order_id)
+        
+        return {
+            "success": True,
+            "transactions_count": len(all_transactions),
+            "orders_count": len(unique_orders)
+        }
