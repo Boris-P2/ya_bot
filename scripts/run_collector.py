@@ -24,6 +24,15 @@ def collect_job():
 if __name__ == "__main__":
     print("🚀 Starting Yandex Taxi Data Collector...")
     
+    # Проверяем наличие переменных окружения
+    if not settings.DATABASE_URL:
+        logger.error("DATABASE_URL is not set!")
+        sys.exit(1)
+    
+    if not settings.YA_API_KEY:
+        logger.error("YA_API_KEY is not set!")
+        sys.exit(1)
+    
     # Запускаем планировщик
     scheduler = BackgroundScheduler()
     scheduler.add_job(
