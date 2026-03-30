@@ -1,343 +1,310 @@
-{
- "cells": [
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "id": "fff2bb25",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup\n",
-    "from telegram.ext import ContextTypes\n",
-    "from datetime import datetime, timedelta\n",
-    "import json\n",
-    "import logging\n",
-    "\n",
-    "from database.session import SessionLocal\n",
-    "from database import crud\n",
-    "from shared.config import settings\n",
-    "\n",
-    "logger = logging.getLogger(__name__)\n",
-    "\n",
-    "async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):\n",
-    "    \"\"\"Команда /start\"\"\"\n",
-    "    user = update.effective_user\n",
-    "    \n",
-    "    # Сохраняем пользователя\n",
-    "    db = SessionLocal()\n",
-    "    try:\n",
-    "        crud.add_or_update_user(\n",
-    "            db,\n",
-    "            telegram_id=user.id,\n",
-    "            username=user.username,\n",
-    "            is_admin=user.id in settings.ADMIN_IDS\n",
-    "        )\n",
-    "    finally:\n",
-    "        db.close()\n",
-    "    \n",
-    "    await update.message.reply_text(\n",
-    "        f\"👋 Привет, {user.first_name}!\\n\\n\"\n",
-    "        f\"Я бот для доступа к данным водителей Яндекс.Такси.\\n\\n\"\n",
-    "        f\"📋 *Доступные команды:*\\n\"\n",
-    "        f\"/stats - статистика по водителям\\n\"\n",
-    "        f\"/top - топ водителей по заказам\\n\"\n",
-    "        f\"/search <имя> - поиск водителя\\n\"\n",
-    "        f\"/new - новые водители (последние 30 дней)\\n\"\n",
-    "        f\"/status <working/not_working/fired> - водители по статусу\\n\"\n",
-    "        f\"/driver <id> - информация о конкретном водителе\\n\"\n",
-    "        f\"/recent - последние обновления\\n\"\n",
-    "        f\"/help - подробная справка\",\n",
-    "        parse_mode='Markdown'\n",
-    "    )\n",
-    "\n",
-    "async def get_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):\n",
-    "    \"\"\"Команда /stats - статистика\"\"\"\n",
-    "    await update.message.reply_text(\"📊 Собираю статистику...\")\n",
-    "    \n",
-    "    db = SessionLocal()\n",
-    "    try:\n",
-    "        stats = crud.get_driver_statistics(db)\n",
-    "        \n",
-    "        response = (\n",
-    "            \"📈 *Статистика водителей:*\\n\\n\"\n",
-    "            f\"👥 *Всего:* {stats['total']}\\n\"\n",
-    "            f\"🟢 *Работают:* {stats['working']}\\n\"\n",
-    "            f\"🟡 *Не работают:* {stats['not_working']}\\n\"\n",
-    "            f\"🔴 *Уволены:* {stats['fired']}\\n\"\n",
-    "            f\"✨ *Новые (30 дней):* {stats['new_last_30_days']}\\n\"\n",
-    "            f\"📊 *Среднее кол-во заказов:* {stats['avg_orders']}\\n\"\n",
-    "        )\n",
-    "        \n",
-    "        # Добавляем информацию о последнем сборе\n",
-    "        last_log = crud.get_last_collection_log(db)\n",
-    "        if last_log:\n",
-    "            response += f\"\\n🔄 *Последнее обновление:*\\n\"\n",
-    "            response += f\"   • {last_log.finished_at.strftime('%Y-%m-%d %H:%M')}\\n\"\n",
-    "            response += f\"   • Новых: {last_log.new_drivers_added}\\n\"\n",
-    "            response += f\"   • Обновлено статусов: {last_log.status_updated}\\n\"\n",
-    "            response += f\"   • Обновлено заказов: {last_log.orders_updated}\\n\"\n",
-    "        \n",
-    "        await update.message.reply_text(response, parse_mode='Markdown')\n",
-    "        \n",
-    "    finally:\n",
-    "        db.close()\n",
-    "\n",
-    "async def get_top_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):\n",
-    "    \"\"\"Команда /top - топ водителей по заказам\"\"\"\n",
-    "    db = SessionLocal()\n",
-    "    try:\n",
-    "        # Получаем топ-10 работающих водителей\n",
-    "        drivers = db.query(models.Driver).filter(\n",
-    "            models.Driver.work_status == 'working'\n",
-    "        ).order_by(\n",
-    "            models.Driver.orders_count.desc()\n",
-    "        ).limit(10).all()\n",
-    "        \n",
-    "        if not drivers:\n",
-    "            await update.message.reply_text(\"Нет данных о водителях\")\n",
-    "            return\n",
-    "        \n",
-    "        response = \"🏆 *Топ-10 водителей по заказам:*\\n\\n\"\n",
-    "        for i, driver in enumerate(drivers, 1):\n",
-    "            response += f\"{i}. {driver.first_name} {driver.last_name}\\n\"\n",
-    "            response += f\"   📦 Заказов: {driver.orders_count}\\n\"\n",
-    "            if driver.work_status == 'working':\n",
-    "                response += f\"   🟢 Статус: Работает\\n\"\n",
-    "            response += \"\\n\"\n",
-    "        \n",
-    "        await update.message.reply_text(response[:4096], parse_mode='Markdown')\n",
-    "        \n",
-    "    finally:\n",
-    "        db.close()\n",
-    "\n",
-    "async def search_driver(update: Update, context: ContextTypes.DEFAULT_TYPE):\n",
-    "    \"\"\"Команда /search <имя или ID>\"\"\"\n",
-    "    if not context.args:\n",
-    "        await update.message.reply_text(\n",
-    "            \"❓ Укажите имя или ID водителя\\n\"\n",
-    "            \"Пример: /search Иван\"\n",
-    "        )\n",
-    "        return\n",
-    "    \n",
-    "    query = ' '.join(context.args)\n",
-    "    await update.message.reply_text(f\"🔍 Ищу: {query}...\")\n",
-    "    \n",
-    "    db = SessionLocal()\n",
-    "    try:\n",
-    "        drivers = crud.search_drivers(db, query)\n",
-    "        \n",
-    "        if not drivers:\n",
-    "            await update.message.reply_text(f\"Водители по запросу '{query}' не найдены\")\n",
-    "            return\n",
-    "        \n",
-    "        response = f\"🔍 *Результаты поиска:*\\n\\n\"\n",
-    "        for driver in drivers[:10]:\n",
-    "            response += f\"👤 {driver.first_name} {driver.last_name}\\n\"\n",
-    "            response += f\"   🆔 ID: `{driver.driver_id[:12]}...`\\n\"\n",
-    "            response += f\"   📦 Заказов: {driver.orders_count}\\n\"\n",
-    "            status_emoji = \"🟢\" if driver.work_status == \"working\" else \"🟡\" if driver.work_status == \"not_working\" else \"🔴\"\n",
-    "            response += f\"   {status_emoji} Статус: {driver.work_status}\\n\\n\"\n",
-    "        \n",
-    "        await update.message.reply_text(response[:4096], parse_mode='Markdown')\n",
-    "        \n",
-    "    finally:\n",
-    "        db.close()\n",
-    "\n",
-    "async def get_new_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):\n",
-    "    \"\"\"Команда /new - новые водители\"\"\"\n",
-    "    db = SessionLocal()\n",
-    "    try:\n",
-    "        cutoff = datetime.utcnow() - timedelta(days=30)\n",
-    "        \n",
-    "        drivers = db.query(models.Driver).filter(\n",
-    "            models.Driver.created_at >= cutoff\n",
-    "        ).order_by(\n",
-    "            models.Driver.created_at.desc()\n",
-    "        ).limit(20).all()\n",
-    "        \n",
-    "        if not drivers:\n",
-    "            await update.message.reply_text(\"Нет новых водителей за последние 30 дней\")\n",
-    "            return\n",
-    "        \n",
-    "        response = \"✨ *Новые водители (последние 30 дней):*\\n\\n\"\n",
-    "        for driver in drivers:\n",
-    "            response += f\"👤 {driver.first_name} {driver.last_name}\\n\"\n",
-    "            response += f\"   📅 Добавлен: {driver.created_at.strftime('%Y-%m-%d')}\\n\"\n",
-    "            response += f\"   📦 Заказов: {driver.orders_count}\\n\\n\"\n",
-    "        \n",
-    "        await update.message.reply_text(response[:4096], parse_mode='Markdown')\n",
-    "        \n",
-    "    finally:\n",
-    "        db.close()\n",
-    "\n",
-    "async def get_drivers_by_status(update: Update, context: ContextTypes.DEFAULT_TYPE):\n",
-    "    \"\"\"Команда /status <working/not_working/fired>\"\"\"\n",
-    "    if not context.args:\n",
-    "        await update.message.reply_text(\n",
-    "            \"❓ Укажите статус\\n\"\n",
-    "            \"Варианты: working, not_working, fired\\n\"\n",
-    "            \"Пример: /status working\"\n",
-    "        )\n",
-    "        return\n",
-    "    \n",
-    "    status = context.args[0].lower()\n",
-    "    if status not in ['working', 'not_working', 'fired']:\n",
-    "        await update.message.reply_text(\"Неверный статус. Используйте: working, not_working или fired\")\n",
-    "        return\n",
-    "    \n",
-    "    db = SessionLocal()\n",
-    "    try:\n",
-    "        drivers = crud.get_drivers_by_status(db, status)\n",
-    "        \n",
-    "        status_emoji = \"🟢\" if status == \"working\" else \"🟡\" if status == \"not_working\" else \"🔴\"\n",
-    "        response = f\"{status_emoji} *Водители со статусом '{status}':*\\n\\n\"\n",
-    "        \n",
-    "        for driver in drivers[:20]:\n",
-    "            response += f\"👤 {driver.first_name} {driver.last_name}\\n\"\n",
-    "            response += f\"   📦 Заказов: {driver.orders_count}\\n\"\n",
-    "            if driver.last_updated:\n",
-    "                days_ago = (datetime.utcnow() - driver.last_updated).days\n",
-    "                response += f\"   🕒 Обновлен: {days_ago} дней назад\\n\"\n",
-    "            response += \"\\n\"\n",
-    "        \n",
-    "        if len(drivers) > 20:\n",
-    "            response += f\"\\n*... и еще {len(drivers) - 20} водителей*\"\n",
-    "        \n",
-    "        await update.message.reply_text(response[:4096], parse_mode='Markdown')\n",
-    "        \n",
-    "    finally:\n",
-    "        db.close()\n",
-    "\n",
-    "async def get_driver_info(update: Update, context: ContextTypes.DEFAULT_TYPE):\n",
-    "    \"\"\"Команда /driver <id> - информация о водителе\"\"\"\n",
-    "    if not context.args:\n",
-    "        await update.message.reply_text(\n",
-    "            \"❓ Укажите ID водителя\\n\"\n",
-    "            \"Пример: /driver 123456789\"\n",
-    "        )\n",
-    "        return\n",
-    "    \n",
-    "    driver_id = context.args[0]\n",
-    "    db = SessionLocal()\n",
-    "    try:\n",
-    "        driver = crud.get_driver(db, driver_id)\n",
-    "        \n",
-    "        if not driver:\n",
-    "            await update.message.reply_text(f\"Водитель с ID {driver_id} не найден\")\n",
-    "            return\n",
-    "        \n",
-    "        status_emoji = \"🟢\" if driver.work_status == \"working\" else \"🟡\" if driver.work_status == \"not_working\" else \"🔴\"\n",
-    "        \n",
-    "        response = (\n",
-    "            f\"👤 *Информация о водителе:*\\n\\n\"\n",
-    "            f\"*Имя:* {driver.first_name} {driver.last_name}\\n\"\n",
-    "            f\"*ID:* `{driver.driver_id}`\\n\"\n",
-    "            f\"*Статус:* {status_emoji} {driver.work_status}\\n\"\n",
-    "            f\"*Заказов:* 📦 {driver.orders_count}\\n\"\n",
-    "            f\"*Баланс:* 💰 {driver.balance} {driver.currency}\\n\"\n",
-    "            f\"*Текущий статус:* {driver.current_status}\\n\"\n",
-    "        )\n",
-    "        \n",
-    "        if driver.created_date:\n",
-    "            response += f\"*Дата регистрации:* {driver.created_date[:10]}\\n\"\n",
-    "        \n",
-    "        if driver.last_transaction_date:\n",
-    "            response += f\"*Последняя транзакция:* {driver.last_transaction_date[:10]}\\n\"\n",
-    "        \n",
-    "        if driver.last_updated:\n",
-    "            days_ago = (datetime.utcnow() - driver.last_updated).days\n",
-    "            response += f\"*Последнее обновление:* {days_ago} дней назад\\n\"\n",
-    "        \n",
-    "        await update.message.reply_text(response, parse_mode='Markdown')\n",
-    "        \n",
-    "    finally:\n",
-    "        db.close()\n",
-    "\n",
-    "async def get_recent_updates(update: Update, context: ContextTypes.DEFAULT_TYPE):\n",
-    "    \"\"\"Команда /recent - последние обновления\"\"\"\n",
-    "    db = SessionLocal()\n",
-    "    try:\n",
-    "        logs = crud.get_collection_history(db, limit=5)\n",
-    "        \n",
-    "        if not logs:\n",
-    "            await update.message.reply_text(\"Нет данных об обновлениях\")\n",
-    "            return\n",
-    "        \n",
-    "        response = \"🔄 *Последние обновления:*\\n\\n\"\n",
-    "        for log in logs:\n",
-    "            status_emoji = \"✅\" if log.status == \"success\" else \"❌\"\n",
-    "            response += f\"{status_emoji} *{log.finished_at.strftime('%Y-%m-%d %H:%M')}*\\n\"\n",
-    "            if log.status == \"success\":\n",
-    "                response += f\"   ✨ Новых: {log.new_drivers_added}\\n\"\n",
-    "                response += f\"   🔄 Обновлено статусов: {log.status_updated}\\n\"\n",
-    "                response += f\"   📊 Обновлено заказов: {log.orders_updated}\\n\"\n",
-    "            else:\n",
-    "                response += f\"   ⚠️ Ошибка: {log.error_message}\\n\"\n",
-    "            response += \"\\n\"\n",
-    "        \n",
-    "        await update.message.reply_text(response, parse_mode='Markdown')\n",
-    "        \n",
-    "    finally:\n",
-    "        db.close()\n",
-    "\n",
-    "async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):\n",
-    "    \"\"\"Команда /help\"\"\"\n",
-    "    help_text = \"\"\"\n",
-    "📚 *Подробная справка по командам:*\n",
-    "\n",
-    "/stats - Общая статистика\n",
-    "   • Количество водителей по статусам\n",
-    "   • Среднее количество заказов\n",
-    "   • Информация о последнем обновлении\n",
-    "\n",
-    "/top - Топ-10 работающих водителей по заказам\n",
-    "\n",
-    "/search <имя или ID> - Поиск водителей\n",
-    "   • Поиск по имени или ID\n",
-    "   • Показывает первые 10 результатов\n",
-    "\n",
-    "/new - Новые водители\n",
-    "   • Показывает водителей, добавленных за последние 30 дней\n",
-    "\n",
-    "/status <working/not_working/fired> - Водители по статусу\n",
-    "   • Показывает до 20 водителей с указанным статусом\n",
-    "\n",
-    "/driver <id> - Информация о конкретном водителе\n",
-    "   • Полная информация: имя, статус, заказы, баланс\n",
-    "\n",
-    "/recent - История обновлений\n",
-    "   • Показывает последние 5 запусков сборщика\n",
-    "\n",
-    "/help - Эта справка\n",
-    "\n",
-    "*Примеры использования:*\n",
-    "/search Иван\n",
-    "/status working\n",
-    "/driver 123456789\n",
-    "\"\"\"\n",
-    "    await update.message.reply_text(help_text, parse_mode='Markdown')"
-   ]
-  }
- ],
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python 3 (ipykernel)",
-   "language": "python",
-   "name": "python3"
-  },
-  "language_info": {
-   "codemirror_mode": {
-    "name": "ipython",
-    "version": 3
-   },
-   "file_extension": ".py",
-   "mimetype": "text/x-python",
-   "name": "python",
-   "nbconvert_exporter": "python",
-   "pygments_lexer": "ipython3",
-   "version": "3.11.4"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 5
-}
+from telegram import Update
+from telegram.ext import ContextTypes
+from datetime import datetime, timedelta
+import json
+import logging
+
+from database.session import SessionLocal
+from database import crud
+from database import models  # <-- ДОБАВЛЯЕМ ЭТОТ ИМПОРТ
+from shared.config import settings
+
+logger = logging.getLogger(__name__)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /start"""
+    user = update.effective_user
+    
+    # Сохраняем пользователя
+    db = SessionLocal()
+    try:
+        crud.add_or_update_user(
+            db,
+            telegram_id=user.id,
+            username=user.username,
+            is_admin=user.id in settings.ADMIN_IDS
+        )
+    finally:
+        db.close()
+    
+    await update.message.reply_text(
+        f"👋 Привет, {user.first_name}!\n\n"
+        f"Я бот для доступа к данным водителей Яндекс.Такси.\n\n"
+        f"📋 *Доступные команды:*\n"
+        f"/stats - статистика по водителям\n"
+        f"/top - топ водителей по заказам\n"
+        f"/search <имя> - поиск водителя\n"
+        f"/new - новые водители (последние 30 дней)\n"
+        f"/status <working/not_working/fired> - водители по статусу\n"
+        f"/driver <id> - информация о конкретном водителе\n"
+        f"/recent - последние обновления\n"
+        f"/help - подробная справка",
+        parse_mode='Markdown'
+    )
+
+async def get_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /stats - статистика"""
+    await update.message.reply_text("📊 Собираю статистику...")
+    
+    db = SessionLocal()
+    try:
+        stats = crud.get_driver_statistics(db)
+        
+        response = (
+            "📈 *Статистика водителей:*\n\n"
+            f"👥 *Всего:* {stats['total']}\n"
+            f"🟢 *Работают:* {stats['working']}\n"
+            f"🟡 *Не работают:* {stats['not_working']}\n"
+            f"🔴 *Уволены:* {stats['fired']}\n"
+            f"✨ *Новые (30 дней):* {stats['new_last_30_days']}\n"
+            f"📊 *Среднее кол-во заказов:* {stats['avg_orders']}\n"
+        )
+        
+        # Добавляем информацию о последнем сборе
+        last_log = crud.get_last_collection_log(db)
+        if last_log:
+            response += f"\n🔄 *Последнее обновление:*\n"
+            response += f"   • {last_log.finished_at.strftime('%Y-%m-%d %H:%M')}\n"
+            response += f"   • Новых: {last_log.new_drivers_added}\n"
+            response += f"   • Обновлено статусов: {last_log.status_updated}\n"
+            response += f"   • Обновлено заказов: {last_log.orders_updated}\n"
+        
+        await update.message.reply_text(response, parse_mode='Markdown')
+        
+    finally:
+        db.close()
+
+async def get_top_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /top - топ водителей по заказам"""
+    db = SessionLocal()
+    try:
+        # Получаем топ-10 работающих водителей
+        drivers = db.query(models.Driver).filter(
+            models.Driver.work_status == 'working'
+        ).order_by(
+            models.Driver.orders_count.desc()
+        ).limit(10).all()
+        
+        if not drivers:
+            await update.message.reply_text("Нет данных о водителях")
+            return
+        
+        response = "🏆 *Топ-10 водителей по заказам:*\n\n"
+        for i, driver in enumerate(drivers, 1):
+            response += f"{i}. {driver.first_name} {driver.last_name}\n"
+            response += f"   📦 Заказов: {driver.orders_count}\n"
+            if driver.work_status == 'working':
+                response += f"   🟢 Статус: Работает\n"
+            response += "\n"
+        
+        await update.message.reply_text(response[:4096], parse_mode='Markdown')
+        
+    finally:
+        db.close()
+
+async def search_driver(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /search <имя или ID>"""
+    if not context.args:
+        await update.message.reply_text(
+            "❓ Укажите имя или ID водителя\n"
+            "Пример: /search Иван"
+        )
+        return
+    
+    query = ' '.join(context.args)
+    await update.message.reply_text(f"🔍 Ищу: {query}...")
+    
+    db = SessionLocal()
+    try:
+        drivers = crud.search_drivers(db, query)
+        
+        if not drivers:
+            await update.message.reply_text(f"Водители по запросу '{query}' не найдены")
+            return
+        
+        response = f"🔍 *Результаты поиска:*\n\n"
+        for driver in drivers[:10]:
+            response += f"👤 {driver.first_name} {driver.last_name}\n"
+            response += f"   🆔 ID: `{driver.driver_id[:12]}...`\n"
+            response += f"   📦 Заказов: {driver.orders_count}\n"
+            status_emoji = "🟢" if driver.work_status == "working" else "🟡" if driver.work_status == "not_working" else "🔴"
+            response += f"   {status_emoji} Статус: {driver.work_status}\n\n"
+        
+        await update.message.reply_text(response[:4096], parse_mode='Markdown')
+        
+    finally:
+        db.close()
+
+async def get_new_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /new - новые водители"""
+    db = SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - timedelta(days=30)
+        
+        drivers = db.query(models.Driver).filter(
+            models.Driver.created_at >= cutoff
+        ).order_by(
+            models.Driver.created_at.desc()
+        ).limit(20).all()
+        
+        if not drivers:
+            await update.message.reply_text("Нет новых водителей за последние 30 дней")
+            return
+        
+        response = "✨ *Новые водители (последние 30 дней):*\n\n"
+        for driver in drivers:
+            response += f"👤 {driver.first_name} {driver.last_name}\n"
+            response += f"   📅 Добавлен: {driver.created_at.strftime('%Y-%m-%d')}\n"
+            response += f"   📦 Заказов: {driver.orders_count}\n\n"
+        
+        await update.message.reply_text(response[:4096], parse_mode='Markdown')
+        
+    finally:
+        db.close()
+
+async def get_drivers_by_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /status <working/not_working/fired>"""
+    if not context.args:
+        await update.message.reply_text(
+            "❓ Укажите статус\n"
+            "Варианты: working, not_working, fired\n"
+            "Пример: /status working"
+        )
+        return
+    
+    status = context.args[0].lower()
+    if status not in ['working', 'not_working', 'fired']:
+        await update.message.reply_text("Неверный статус. Используйте: working, not_working или fired")
+        return
+    
+    db = SessionLocal()
+    try:
+        drivers = crud.get_drivers_by_status(db, status)
+        
+        status_emoji = "🟢" if status == "working" else "🟡" if status == "not_working" else "🔴"
+        response = f"{status_emoji} *Водители со статусом '{status}':*\n\n"
+        
+        for driver in drivers[:20]:
+            response += f"👤 {driver.first_name} {driver.last_name}\n"
+            response += f"   📦 Заказов: {driver.orders_count}\n"
+            if driver.last_updated:
+                days_ago = (datetime.utcnow() - driver.last_updated).days
+                response += f"   🕒 Обновлен: {days_ago} дней назад\n"
+            response += "\n"
+        
+        if len(drivers) > 20:
+            response += f"\n*... и еще {len(drivers) - 20} водителей*"
+        
+        await update.message.reply_text(response[:4096], parse_mode='Markdown')
+        
+    finally:
+        db.close()
+
+async def get_driver_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /driver <id> - информация о водителе"""
+    if not context.args:
+        await update.message.reply_text(
+            "❓ Укажите ID водителя\n"
+            "Пример: /driver 123456789"
+        )
+        return
+    
+    driver_id = context.args[0]
+    db = SessionLocal()
+    try:
+        driver = crud.get_driver(db, driver_id)
+        
+        if not driver:
+            await update.message.reply_text(f"Водитель с ID {driver_id} не найден")
+            return
+        
+        status_emoji = "🟢" if driver.work_status == "working" else "🟡" if driver.work_status == "not_working" else "🔴"
+        
+        response = (
+            f"👤 *Информация о водителе:*\n\n"
+            f"*Имя:* {driver.first_name} {driver.last_name}\n"
+            f"*ID:* `{driver.driver_id}`\n"
+            f"*Статус:* {status_emoji} {driver.work_status}\n"
+            f"*Заказов:* 📦 {driver.orders_count}\n"
+            f"*Баланс:* 💰 {driver.balance} {driver.currency}\n"
+            f"*Текущий статус:* {driver.current_status}\n"
+        )
+        
+        if driver.created_date:
+            response += f"*Дата регистрации:* {driver.created_date[:10]}\n"
+        
+        if driver.last_transaction_date:
+            response += f"*Последняя транзакция:* {driver.last_transaction_date[:10]}\n"
+        
+        if driver.last_updated:
+            days_ago = (datetime.utcnow() - driver.last_updated).days
+            response += f"*Последнее обновление:* {days_ago} дней назад\n"
+        
+        await update.message.reply_text(response, parse_mode='Markdown')
+        
+    finally:
+        db.close()
+
+async def get_recent_updates(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /recent - последние обновления"""
+    db = SessionLocal()
+    try:
+        logs = crud.get_collection_history(db, limit=5)
+        
+        if not logs:
+            await update.message.reply_text("Нет данных об обновлениях")
+            return
+        
+        response = "🔄 *Последние обновления:*\n\n"
+        for log in logs:
+            status_emoji = "✅" if log.status == "success" else "❌"
+            response += f"{status_emoji} *{log.finished_at.strftime('%Y-%m-%d %H:%M')}*\n"
+            if log.status == "success":
+                response += f"   ✨ Новых: {log.new_drivers_added}\n"
+                response += f"   🔄 Обновлено статусов: {log.status_updated}\n"
+                response += f"   📊 Обновлено заказов: {log.orders_updated}\n"
+            else:
+                response += f"   ⚠️ Ошибка: {log.error_message}\n"
+            response += "\n"
+        
+        await update.message.reply_text(response, parse_mode='Markdown')
+        
+    finally:
+        db.close()
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /help"""
+    help_text = """
+📚 *Подробная справка по командам:*
+
+/stats - Общая статистика
+   • Количество водителей по статусам
+   • Среднее количество заказов
+   • Информация о последнем обновлении
+
+/top - Топ-10 работающих водителей по заказам
+
+/search <имя или ID> - Поиск водителей
+   • Поиск по имени или ID
+   • Показывает первые 10 результатов
+
+/new - Новые водители
+   • Показывает водителей, добавленных за последние 30 дней
+
+/status <working/not_working/fired> - Водители по статусу
+   • Показывает до 20 водителей с указанным статусом
+
+/driver <id> - Информация о конкретном водителе
+   • Полная информация: имя, статус, заказы, баланс
+
+/recent - История обновлений
+   • Показывает последние 5 запусков сборщика
+
+/help - Эта справка
+
+*Примеры использования:*
+/search Иван
+/status working
+/driver 123456789
+"""
+    await update.message.reply_text(help_text, parse_mode='Markdown')
