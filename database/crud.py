@@ -1,212 +1,182 @@
-{
- "cells": [
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "id": "4cbbf7e6",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "from sqlalchemy.orm import Session\n",
-    "from typing import List, Optional, Dict, Any\n",
-    "from datetime import datetime, timedelta\n",
-    "from database import models\n",
-    "\n",
-    "# ========== ВОДИТЕЛИ ==========\n",
-    "\n",
-    "def save_driver(db: Session, driver_data: Dict[str, Any]) -> models.Driver:\n",
-    "    \"\"\"Сохранить или обновить водителя\"\"\"\n",
-    "    driver = db.query(models.Driver).filter(\n",
-    "        models.Driver.driver_id == driver_data['driver_id']\n",
-    "    ).first()\n",
-    "    \n",
-    "    if driver:\n",
-    "        # Обновляем существующего\n",
-    "        for key, value in driver_data.items():\n",
-    "            if hasattr(driver, key):\n",
-    "                setattr(driver, key, value)\n",
-    "        driver.last_updated = datetime.utcnow()\n",
-    "    else:\n",
-    "        # Создаем нового\n",
-    "        driver = models.Driver(**driver_data)\n",
-    "        db.add(driver)\n",
-    "    \n",
-    "    db.commit()\n",
-    "    db.refresh(driver)\n",
-    "    return driver\n",
-    "\n",
-    "def get_driver(db: Session, driver_id: str) -> Optional[models.Driver]:\n",
-    "    \"\"\"Получить водителя по ID\"\"\"\n",
-    "    return db.query(models.Driver).filter(\n",
-    "        models.Driver.driver_id == driver_id\n",
-    "    ).first()\n",
-    "\n",
-    "def get_all_drivers(db: Session, limit: int = 100, offset: int = 0) -> List[models.Driver]:\n",
-    "    \"\"\"Получить список всех водителей\"\"\"\n",
-    "    return db.query(models.Driver).order_by(\n",
-    "        models.Driver.created_at.desc()\n",
-    "    ).offset(offset).limit(limit).all()\n",
-    "\n",
-    "def get_drivers_by_status(db: Session, status: str) -> List[models.Driver]:\n",
-    "    \"\"\"Получить водителей по статусу\"\"\"\n",
-    "    return db.query(models.Driver).filter(\n",
-    "        models.Driver.work_status == status\n",
-    "    ).all()\n",
-    "\n",
-    "def get_drivers_for_update(db: Session, max_count: int = 100) -> List[models.Driver]:\n",
-    "    \"\"\"Получить водителей, которым нужно обновить заказы\"\"\"\n",
-    "    now = datetime.utcnow()\n",
-    "    \n",
-    "    # Логика определения приоритета:\n",
-    "    # 1. Новые водители (менее 30 дней)\n",
-    "    # 2. Те, у кого last_updated > 3 дня\n",
-    "    # 3. Исключаем уволенных\n",
-    "    \n",
-    "    cutoff_date = now - timedelta(days=30)\n",
-    "    stale_date = now - timedelta(days=3)\n",
-    "    \n",
-    "    drivers = db.query(models.Driver).filter(\n",
-    "        models.Driver.work_status != 'fired',\n",
-    "        db.or_(\n",
-    "            models.Driver.created_date >= cutoff_date,  # Новые водители\n",
-    "            db.or_(\n",
-    "                models.Driver.last_updated.is_(None),\n",
-    "                models.Driver.last_updated <= stale_date  # Давно не обновлялись\n",
-    "            )\n",
-    "        )\n",
-    "    ).limit(max_count).all()\n",
-    "    \n",
-    "    return drivers\n",
-    "\n",
-    "def update_driver_orders(\n",
-    "    db: Session, \n",
-    "    driver_id: str, \n",
-    "    orders_count: int,\n",
-    "    last_transaction_date: Optional[str] = None\n",
-    ") -> bool:\n",
-    "    \"\"\"Обновить количество заказов водителя\"\"\"\n",
-    "    driver = db.query(models.Driver).filter(\n",
-    "        models.Driver.driver_id == driver_id\n",
-    "    ).first()\n",
-    "    \n",
-    "    if driver:\n",
-    "        # Обновляем только если новое значение >= старого\n",
-    "        if orders_count >= driver.orders_count:\n",
-    "            driver.orders_count = orders_count\n",
-    "            driver.last_updated = datetime.utcnow()\n",
-    "            if last_transaction_date:\n",
-    "                driver.last_transaction_date = last_transaction_date\n",
-    "            db.commit()\n",
-    "            return True\n",
-    "        else:\n",
-    "            # Логируем ошибку\n",
-    "            logger.warning(f\"Orders count decreased for {driver_id}: {driver.orders_count} -> {orders_count}\")\n",
-    "            return False\n",
-    "    return False\n",
-    "\n",
-    "def get_driver_statistics(db: Session) -> Dict[str, Any]:\n",
-    "    \"\"\"Получить статистику по водителям\"\"\"\n",
-    "    total = db.query(models.Driver).count()\n",
-    "    working = db.query(models.Driver).filter(\n",
-    "        models.Driver.work_status == 'working'\n",
-    "    ).count()\n",
-    "    not_working = db.query(models.Driver).filter(\n",
-    "        models.Driver.work_status == 'not_working'\n",
-    "    ).count()\n",
-    "    fired = db.query(models.Driver).filter(\n",
-    "        models.Driver.work_status == 'fired'\n",
-    "    ).count()\n",
-    "    \n",
-    "    # Новые водители за последние 30 дней\n",
-    "    cutoff = datetime.utcnow() - timedelta(days=30)\n",
-    "    new_drivers = db.query(models.Driver).filter(\n",
-    "        models.Driver.created_at >= cutoff\n",
-    "    ).count()\n",
-    "    \n",
-    "    # Среднее количество заказов\n",
-    "    avg_orders = db.query(db.func.avg(models.Driver.orders_count)).scalar() or 0\n",
-    "    \n",
-    "    return {\n",
-    "        'total': total,\n",
-    "        'working': working,\n",
-    "        'not_working': not_working,\n",
-    "        'fired': fired,\n",
-    "        'new_last_30_days': new_drivers,\n",
-    "        'avg_orders': int(avg_orders)\n",
-    "    }\n",
-    "\n",
-    "def search_drivers(db: Session, query: str) -> List[models.Driver]:\n",
-    "    \"\"\"Поиск водителей по имени или ID\"\"\"\n",
-    "    search_pattern = f\"%{query}%\"\n",
-    "    return db.query(models.Driver).filter(\n",
-    "        db.or_(\n",
-    "            models.Driver.driver_id.ilike(search_pattern),\n",
-    "            models.Driver.first_name.ilike(search_pattern),\n",
-    "            models.Driver.last_name.ilike(search_pattern)\n",
-    "        )\n",
-    "    ).limit(20).all()\n",
-    "\n",
-    "# ========== ЛОГИ ==========\n",
-    "\n",
-    "def create_collection_log(\n",
-    "    db: Session,\n",
-    "    status: str,\n",
-    "    new_drivers_added: int = 0,\n",
-    "    status_updated: int = 0,\n",
-    "    orders_updated: int = 0,\n",
-    "    api_calls_used: int = 0,\n",
-    "    errors: List[str] = None,\n",
-    "    error_message: str = None\n",
-    ") -> models.CollectionLog:\n",
-    "    \"\"\"Создать запись о сборе данных\"\"\"\n",
-    "    log = models.CollectionLog(\n",
-    "        status=status,\n",
-    "        new_drivers_added=new_drivers_added,\n",
-    "        status_updated=status_updated,\n",
-    "        orders_updated=orders_updated,\n",
-    "        api_calls_used=api_calls_used,\n",
-    "        errors=errors or [],\n",
-    "        error_message=error_message,\n",
-    "        finished_at=datetime.utcnow()\n",
-    "    )\n",
-    "    db.add(log)\n",
-    "    db.commit()\n",
-    "    db.refresh(log)\n",
-    "    return log\n",
-    "\n",
-    "def get_last_collection_log(db: Session) -> Optional[models.CollectionLog]:\n",
-    "    \"\"\"Получить последний лог сбора\"\"\"\n",
-    "    return db.query(models.CollectionLog).order_by(\n",
-    "        models.CollectionLog.started_at.desc()\n",
-    "    ).first()\n",
-    "\n",
-    "def get_collection_history(db: Session, limit: int = 10) -> List[models.CollectionLog]:\n",
-    "    \"\"\"Получить историю сборов\"\"\"\n",
-    "    return db.query(models.CollectionLog).order_by(\n",
-    "        models.CollectionLog.started_at.desc()\n",
-    "    ).limit(limit).all()"
-   ]
-  }
- ],
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python 3 (ipykernel)",
-   "language": "python",
-   "name": "python3"
-  },
-  "language_info": {
-   "codemirror_mode": {
-    "name": "ipython",
-    "version": 3
-   },
-   "file_extension": ".py",
-   "mimetype": "text/x-python",
-   "name": "python",
-   "nbconvert_exporter": "python",
-   "pygments_lexer": "ipython3",
-   "version": "3.11.4"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 5
-}
+from sqlalchemy.orm import Session
+from typing import List, Optional, Dict, Any
+from datetime import datetime, timedelta
+import logging
+from database import models
+
+logger = logging.getLogger(__name__)
+
+# ========== ВОДИТЕЛИ ==========
+
+def save_driver(db: Session, driver_data: Dict[str, Any]) -> models.Driver:
+    """Сохранить или обновить водителя"""
+    driver = db.query(models.Driver).filter(
+        models.Driver.driver_id == driver_data['driver_id']
+    ).first()
+    
+    if driver:
+        # Обновляем существующего
+        for key, value in driver_data.items():
+            if hasattr(driver, key):
+                setattr(driver, key, value)
+        driver.last_updated = datetime.utcnow()
+    else:
+        # Создаем нового
+        driver = models.Driver(**driver_data)
+        db.add(driver)
+    
+    db.commit()
+    db.refresh(driver)
+    return driver
+
+def get_driver(db: Session, driver_id: str) -> Optional[models.Driver]:
+    """Получить водителя по ID"""
+    return db.query(models.Driver).filter(
+        models.Driver.driver_id == driver_id
+    ).first()
+
+def get_all_drivers(db: Session, limit: int = 100, offset: int = 0) -> List[models.Driver]:
+    """Получить список всех водителей"""
+    return db.query(models.Driver).order_by(
+        models.Driver.created_at.desc()
+    ).offset(offset).limit(limit).all()
+
+def get_drivers_by_status(db: Session, status: str) -> List[models.Driver]:
+    """Получить водителей по статусу"""
+    return db.query(models.Driver).filter(
+        models.Driver.work_status == status
+    ).all()
+
+def get_drivers_for_update(db: Session, max_count: int = 100) -> List[models.Driver]:
+    """Получить водителей, которым нужно обновить заказы"""
+    now = datetime.utcnow()
+    
+    # Логика определения приоритета:
+    # 1. Новые водители (менее 30 дней)
+    # 2. Те, у кого last_updated > 3 дня
+    # 3. Исключаем уволенных
+    
+    cutoff_date = now - timedelta(days=30)
+    stale_date = now - timedelta(days=3)
+    
+    drivers = db.query(models.Driver).filter(
+        models.Driver.work_status != 'fired',
+        db.or_(
+            models.Driver.created_at >= cutoff_date,  # Новые водители
+            db.or_(
+                models.Driver.last_updated.is_(None),
+                models.Driver.last_updated <= stale_date  # Давно не обновлялись
+            )
+        )
+    ).limit(max_count).all()
+    
+    return drivers
+
+def update_driver_orders(
+    db: Session, 
+    driver_id: str, 
+    orders_count: int,
+    last_transaction_date: Optional[str] = None
+) -> bool:
+    """Обновить количество заказов водителя"""
+    driver = db.query(models.Driver).filter(
+        models.Driver.driver_id == driver_id
+    ).first()
+    
+    if driver:
+        # Обновляем только если новое значение >= старого
+        if orders_count >= driver.orders_count:
+            driver.orders_count = orders_count
+            driver.last_updated = datetime.utcnow()
+            if last_transaction_date:
+                driver.last_transaction_date = last_transaction_date
+            db.commit()
+            return True
+        else:
+            # Логируем ошибку
+            logger.warning(f"Orders count decreased for {driver_id}: {driver.orders_count} -> {orders_count}")
+            return False
+    return False
+
+def get_driver_statistics(db: Session) -> Dict[str, Any]:
+    """Получить статистику по водителям"""
+    total = db.query(models.Driver).count()
+    working = db.query(models.Driver).filter(
+        models.Driver.work_status == 'working'
+    ).count()
+    not_working = db.query(models.Driver).filter(
+        models.Driver.work_status == 'not_working'
+    ).count()
+    fired = db.query(models.Driver).filter(
+        models.Driver.work_status == 'fired'
+    ).count()
+    
+    # Новые водители за последние 30 дней
+    cutoff = datetime.utcnow() - timedelta(days=30)
+    new_drivers = db.query(models.Driver).filter(
+        models.Driver.created_at >= cutoff
+    ).count()
+    
+    # Среднее количество заказов
+    from sqlalchemy import func
+    avg_orders = db.query(func.avg(models.Driver.orders_count)).scalar() or 0
+    
+    return {
+        'total': total,
+        'working': working,
+        'not_working': not_working,
+        'fired': fired,
+        'new_last_30_days': new_drivers,
+        'avg_orders': int(avg_orders)
+    }
+
+def search_drivers(db: Session, query: str) -> List[models.Driver]:
+    """Поиск водителей по имени или ID"""
+    search_pattern = f"%{query}%"
+    return db.query(models.Driver).filter(
+        db.or_(
+            models.Driver.driver_id.ilike(search_pattern),
+            models.Driver.first_name.ilike(search_pattern),
+            models.Driver.last_name.ilike(search_pattern)
+        )
+    ).limit(20).all()
+
+# ========== ЛОГИ ==========
+
+def create_collection_log(
+    db: Session,
+    status: str,
+    new_drivers_added: int = 0,
+    status_updated: int = 0,
+    orders_updated: int = 0,
+    api_calls_used: int = 0,
+    errors: List[str] = None,
+    error_message: str = None
+) -> models.CollectionLog:
+    """Создать запись о сборе данных"""
+    log = models.CollectionLog(
+        status=status,
+        new_drivers_added=new_drivers_added,
+        status_updated=status_updated,
+        orders_updated=orders_updated,
+        api_calls_used=api_calls_used,
+        errors=errors or [],
+        error_message=error_message,
+        finished_at=datetime.utcnow()
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    return log
+
+def get_last_collection_log(db: Session) -> Optional[models.CollectionLog]:
+    """Получить последний лог сбора"""
+    return db.query(models.CollectionLog).order_by(
+        models.CollectionLog.started_at.desc()
+    ).first()
+
+def get_collection_history(db: Session, limit: int = 10) -> List[models.CollectionLog]:
+    """Получить историю сборов"""
+    return db.query(models.CollectionLog).order_by(
+        models.CollectionLog.started_at.desc()
+    ).limit(limit).all()
