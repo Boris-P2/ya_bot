@@ -23,63 +23,35 @@ class DataCollector:
         self.days_transactions_back = settings.DAYS_TRANSACTIONS_BACK
         
     def update_drivers_list(self, db: Session, api_drivers: List[Dict]) -> Dict:
-        """
-        Обновляет список водителей (ваша оригинальная логика)
-        """
-        now_utc = datetime.now(timezone.utc)
-        new_count = 0
-        status_updated = 0
+ 
+#Обновляет список водителей (ваша оригинальная логика)
+
+    now_utc = datetime.utcnow()  # ← изменили на utcnow()
+    new_count = 0
+    status_updated = 0
+    
+    for api_driver in api_drivers:
+        # ... остальной код ...
         
-        for api_driver in api_drivers:
-            driver_profile = api_driver.get('driver_profile', {})
-            account = api_driver.get('account', {}) or api_driver.get('accounts', [{}])[0] if api_driver.get('accounts') else {}
-            current_status = api_driver.get('current_status', {})
+        if existing:
+            # Существующий - проверяем нужно ли обновить статус
+            needs_update = False
             
-            driver_id = driver_profile.get('id', '')
-            if not driver_id:
-                continue
+            if existing.work_status != work_status:
+                needs_update = True
+            elif existing.last_status_updated:
+                # Теперь оба datetime одного типа
+                days_since_update = (now_utc - existing.last_status_updated).days
+                if work_status == 'working' and days_since_update >= settings.DAYS_STATUS_UPDATE_WORKING:
+                    needs_update = True
+                elif work_status == 'not_working' and days_since_update >= settings.DAYS_STATUS_UPDATE_NOT_WORKING:
+                    needs_update = True
             
-            work_status = driver_profile.get('work_status', '')
-            
-            # Проверяем, существует ли водитель
-            existing = crud.get_driver(db, driver_id)
-            
-            driver_data = {
-                'driver_id': driver_id,
-                'first_name': driver_profile.get('first_name', ''),
-                'last_name': driver_profile.get('last_name', ''),
-                'created_date': driver_profile.get('created_date', ''),
-                'work_status': work_status,
-                'balance': account.get('balance', ''),
-                'currency': account.get('currency', ''),
-                'current_status': current_status.get('status', ''),
-                'last_transaction_date': account.get('last_transaction_date', '')
-            }
-            
-            if not existing:
-                # Новый водитель
+            if needs_update:
                 driver_data['last_status_updated'] = now_utc
                 crud.save_driver(db, driver_data)
-                new_count += 1
-                logger.info(f"New driver added: {driver_data['first_name']} {driver_data['last_name']}")
-            else:
-                # Существующий - проверяем нужно ли обновить статус
-                needs_update = False
-                
-                if existing.work_status != work_status:
-                    needs_update = True
-                elif existing.last_status_updated:
-                    days_since_update = (now_utc - existing.last_status_updated).days
-                    if work_status == 'working' and days_since_update >= settings.DAYS_STATUS_UPDATE_WORKING:
-                        needs_update = True
-                    elif work_status == 'not_working' and days_since_update >= settings.DAYS_STATUS_UPDATE_NOT_WORKING:
-                        needs_update = True
-                
-                if needs_update:
-                    driver_data['last_status_updated'] = now_utc
-                    crud.save_driver(db, driver_data)
-                    status_updated += 1
-                    logger.info(f"Status updated for {driver_data['first_name']}: {work_status}")
+                status_updated += 1
+                logger.info(f"Status updated for {driver_data['first_name']}: {work_status}")
         
         return {'new': new_count, 'updated': status_updated}
     
