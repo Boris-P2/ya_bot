@@ -17,7 +17,8 @@ from bot.handlers import (
     get_new_drivers,
     get_drivers_by_status,
     get_driver_info,
-    unknown
+    unknown,
+    export_drivers
 )
 
 logging.basicConfig(
@@ -48,6 +49,7 @@ def run_bot():
     application.add_handler(CommandHandler("status", get_drivers_by_status))
     application.add_handler(CommandHandler("driver", get_driver_info))
     application.add_handler(CommandHandler("recent", get_recent_updates))
+    application.add_handler(CommandHandler("export", export_drivers))
     
     # Обработчик неизвестных команд
     application.add_handler(MessageHandler(filters.COMMAND, unknown))
