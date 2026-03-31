@@ -272,6 +272,13 @@ async def get_recent_updates(update: Update, context: ContextTypes.DEFAULT_TYPE)
     finally:
         db.close()
 
+async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка неизвестных команд"""
+    await update.message.reply_text(
+        "❌ Неизвестная команда.\n"
+        "Используйте /help для списка доступных команд"
+    )
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /help"""
     help_text = """
