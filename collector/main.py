@@ -137,7 +137,7 @@ class DataCollector:
             drivers_result = self.update_drivers_list(db, api_drivers)
             
             # Шаг 3: Получаем водителей для обновления заказов
-            drivers_to_update = crud.get_drivers_for_update(db, max_count=100)
+            drivers_to_update = crud.get_drivers_for_update(db, max_count=500)
             
             # Шаг 4: Обновляем заказы
             orders_result = {'updated': 0, 'errors': []}
