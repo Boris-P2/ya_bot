@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes
 from datetime import datetime, timedelta
 import json
 import logging
-
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from database.session import SessionLocal
 from database import crud
 from database import models  # <-- ДОБАВЛЯЕМ ЭТОТ ИМПОРТ
@@ -28,6 +28,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     finally:
         db.close()
+    keyboard = []
+    if update.effective_user.id in settings.ADMIN_IDS:
+        keyboard.append([InlineKeyboardButton("📊 Экспорт данных", callback_data="export")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+    
     
     await update.message.reply_text(
         f"👋 Привет, {user.first_name}!\n\n"
@@ -41,8 +47,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"/driver <id> - информация о конкретном водителе\n"
         f"/recent - последние обновления\n"
         f"/help - подробная справка",
-        parse_mode='Markdown'
+        parse_mode='Markdown',
+        reply_markup=reply_markup
     )
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка нажатий на кнопки"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "export":
+        # Создаем контекст для вызова функции экспорта
+        await export_drivers(query.message, context)
 
 async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт всех водителей в CSV/XLSX файл"""
@@ -351,13 +367,6 @@ async def get_recent_updates(update: Update, context: ContextTypes.DEFAULT_TYPE)
     finally:
         db.close()
 
-async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка неизвестных команд"""
-    await update.message.reply_text(
-        "❌ Неизвестная команда.\n"
-        "Используйте /help для списка доступных команд"
-    )
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /help"""
     help_text = """
@@ -394,3 +403,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /driver 123456789
 """
     await update.message.reply_text(help_text, parse_mode='Markdown')
+
+async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка неизвестных команд"""
+    await update.message.reply_text(
+        "❌ Неизвестная команда.\n"
+        "Используйте /help для списка доступных команд"
+    )
+
