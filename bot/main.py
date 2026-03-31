@@ -4,8 +4,8 @@ from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
-    CallbackQueryHandler,
-    filters
+    filters,
+    CallbackQueryHandler  # ← Убедитесь, что этот импорт есть
 )
 from shared.config import settings
 from bot.handlers import (
@@ -19,7 +19,8 @@ from bot.handlers import (
     get_drivers_by_status,
     get_driver_info,
     unknown,
-    export_drivers
+    export_drivers,
+    button_callback
 )
 
 logging.basicConfig(
@@ -51,6 +52,8 @@ def run_bot():
     application.add_handler(CommandHandler("driver", get_driver_info))
     application.add_handler(CommandHandler("recent", get_recent_updates))
     application.add_handler(CommandHandler("export", export_drivers))
+
+    # Обработчик кнопок
     application.add_handler(CallbackQueryHandler(button_callback))
     
     # Обработчик неизвестных команд
