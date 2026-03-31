@@ -4,6 +4,7 @@ from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     filters
 )
 from shared.config import settings
@@ -50,6 +51,7 @@ def run_bot():
     application.add_handler(CommandHandler("driver", get_driver_info))
     application.add_handler(CommandHandler("recent", get_recent_updates))
     application.add_handler(CommandHandler("export", export_drivers))
+    application.add_handler(CallbackQueryHandler(button_callback))
     
     # Обработчик неизвестных команд
     application.add_handler(MessageHandler(filters.COMMAND, unknown))
