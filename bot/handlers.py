@@ -1,5 +1,5 @@
 import io
-import pandas as pd
+import csv
 from telegram import Update
 from telegram.ext import ContextTypes
 from datetime import datetime, timedelta
@@ -61,8 +61,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await export_drivers(query.message, context)
 
 async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Экспорт всех водителей в CSV/XLSX файл"""
-    # Проверка прав доступа (только админы)
+    """Экспорт всех водителей в CSV файл (без pandas)"""
     if update.effective_user.id not in settings.ADMIN_IDS:
         await update.message.reply_text("⛔ У вас нет прав для этой команды")
         return
@@ -71,7 +70,6 @@ async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     db = SessionLocal()
     try:
-        # Получаем всех водителей
         drivers = db.query(models.Driver).order_by(
             models.Driver.orders_count.desc()
         ).all()
@@ -80,52 +78,44 @@ async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Нет данных для экспорта")
             return
         
-        # Преобразуем в DataFrame
-        data = []
+        # Создаем CSV в памяти
+        output = io.StringIO()
+        writer = csv.writer(output, delimiter=';')
+        
+        # Заголовки
+        writer.writerow([
+            'ID', 'Имя', 'Фамилия', 'Статус', 'Заказы', 
+            'Баланс', 'Валюта', 'Текущий статус', 
+            'Дата регистрации', 'Последняя транзакция', 
+            'Последнее обновление', 'Дата добавления'
+        ])
+        
+        # Данные
         for driver in drivers:
-            data.append({
-                'ID': driver.driver_id,
-                'Имя': driver.first_name,
-                'Фамилия': driver.last_name,
-                'Статус': driver.work_status,
-                'Заказы': driver.orders_count,
-                'Баланс': driver.balance,
-                'Валюта': driver.currency,
-                'Текущий статус': driver.current_status,
-                'Дата регистрации': driver.created_date[:10] if driver.created_date else '',
-                'Последняя транзакция': driver.last_transaction_date[:10] if driver.last_transaction_date else '',
-                'Последнее обновление': driver.last_updated.strftime('%Y-%m-%d %H:%M') if driver.last_updated else '',
-                'Дата добавления': driver.created_at.strftime('%Y-%m-%d %H:%M') if driver.created_at else ''
-            })
+            writer.writerow([
+                driver.driver_id,
+                driver.first_name,
+                driver.last_name,
+                driver.work_status,
+                driver.orders_count,
+                driver.balance,
+                driver.currency,
+                driver.current_status,
+                driver.created_date[:10] if driver.created_date else '',
+                driver.last_transaction_date[:10] if driver.last_transaction_date else '',
+                driver.last_updated.strftime('%Y-%m-%d %H:%M') if driver.last_updated else '',
+                driver.created_at.strftime('%Y-%m-%d %H:%M') if driver.created_at else ''
+            ])
         
-        df = pd.DataFrame(data)
-        
-        # Создаем Excel файл
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name='Водители', index=False)
-            
-            # Добавляем сводную статистику на отдельный лист
-            stats = {
-                'Показатель': ['Всего водителей', 'Работают', 'Не работают', 'Уволены', 'Среднее заказов', 'Максимум заказов'],
-                'Значение': [
-                    len(drivers),
-                    len([d for d in drivers if d.work_status == 'working']),
-                    len([d for d in drivers if d.work_status == 'not_working']),
-                    len([d for d in drivers if d.work_status == 'fired']),
-                    round(df['Заказы'].mean(), 2),
-                    df['Заказы'].max()
-                ]
-            }
-            stats_df = pd.DataFrame(stats)
-            stats_df.to_excel(writer, sheet_name='Статистика', index=False)
-        
-        output.seek(0)
+        # Конвертируем в bytes для отправки
+        output_bytes = io.BytesIO()
+        output_bytes.write(output.getvalue().encode('utf-8-sig'))
+        output_bytes.seek(0)
         
         # Отправляем файл
         await update.message.reply_document(
-            document=output,
-            filename=f'drivers_export_{datetime.now().strftime("%Y%m%d_%H%M")}.xlsx',
+            document=output_bytes,
+            filename=f'drivers_export_{datetime.now().strftime("%Y%m%d_%H%M")}.csv',
             caption=f'📊 Экспорт данных о водителях\n'
                     f'Всего записей: {len(drivers)}\n'
                     f'Дата: {datetime.now().strftime("%Y-%m-%d %H:%M")}'
