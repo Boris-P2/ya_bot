@@ -139,38 +139,43 @@ def search_drivers(db: Session, query: str) -> List[models.Driver]:
     ).limit(20).all()
 
 def init_update_queue(db: Session):
-    """Инициализирует очередь обновления (запустить один раз)"""
+    """Инициализирует очередь обновления из существующих водителей"""
+    from datetime import datetime
+    
+    # Проверяем, есть ли записи
+    count = db.query(models.UpdateQueue).count()
+    if count > 0:
+        logger.info(f"Queue already has {count} entries")
+        return count
+    
     # Получаем всех активных водителей
     drivers = db.query(models.Driver).filter(
         models.Driver.work_status != 'fired'
     ).all()
     
-    count = 0
+    added = 0
     for driver in drivers:
-        # Проверяем, есть ли в очереди
-        existing = db.query(models.UpdateQueue).filter(
-            models.UpdateQueue.driver_id == driver.driver_id
-        ).first()
-        
-        if not existing:
-            # Определяем приоритет: новые водители (менее 30 дней) получают приоритет
-            priority = 0
-            if driver.created_date:
-                created = datetime.strptime(driver.created_date[:10], '%Y-%m-%d') if driver.created_date else None
-                if created and (datetime.utcnow() - created).days < 30:
+        priority = 0
+        if driver.created_date:
+            try:
+                created = datetime.strptime(driver.created_date[:10], '%Y-%m-%d')
+                if (datetime.utcnow() - created).days < 30:
                     priority = 1
-            
-            queue_entry = models.UpdateQueue(
-                driver_id=driver.driver_id,
-                priority=priority,
-                last_updated=driver.last_updated or datetime.utcnow()
-            )
-            db.add(queue_entry)
-            count += 1
+            except:
+                pass
+        
+        queue_entry = models.UpdateQueue(
+            driver_id=driver.driver_id,
+            priority=priority,
+            last_updated=driver.last_updated or datetime.utcnow()
+        )
+        db.add(queue_entry)
+        added += 1
     
     db.commit()
-    logger.info(f"Initialized update queue with {count} drivers")
-    return count
+    logger.info(f"Initialized queue with {added} drivers")
+    return added
+
 
 def get_next_drivers_for_update(db: Session, batch_size: int = 100) -> List[models.UpdateQueue]:
     """
@@ -204,21 +209,25 @@ def update_queue_timestamp(db: Session, driver_id: str):
     ).update({'last_updated': datetime.utcnow()})
     db.commit()
 
-def add_new_driver_to_queue(db: Session, driver_id: str, is_new: bool = True):
-    """Добавляет нового водителя в очередь"""
+def add_driver_to_queue(db: Session, driver_id: str, is_new: bool = True):
+    """Добавляет водителя в очередь"""
     existing = db.query(models.UpdateQueue).filter(
         models.UpdateQueue.driver_id == driver_id
     ).first()
     
-    if not existing:
+    if existing:
+        # Обновляем приоритет и время
+        existing.priority = 1 if is_new else existing.priority
+        existing.last_updated = datetime.utcnow()
+    else:
         queue_entry = models.UpdateQueue(
             driver_id=driver_id,
-            priority=1 if is_new else 0,  # Новые водители получают высокий приоритет
+            priority=1 if is_new else 0,
             last_updated=datetime.utcnow()
         )
         db.add(queue_entry)
-        db.commit()
-        logger.info(f"Added new driver to queue: {driver_id}")
+    
+    db.commit()
 
 def get_queue_stats(db: Session) -> Dict[str, Any]:
     """Получает статистику очереди"""
@@ -229,6 +238,7 @@ def get_queue_stats(db: Session) -> Dict[str, Any]:
     low_priority = total - high_priority
     
     # Среднее время ожидания
+    from sqlalchemy import func
     avg_wait = db.query(func.avg(
         func.extract('epoch', datetime.utcnow() - models.UpdateQueue.last_updated)
     )).scalar() or 0
