@@ -10,6 +10,85 @@ from shared.config import settings
 
 logger = logging.getLogger(__name__)
 
+def run_full_update(self) -> Dict:
+    """Запускает полный цикл обновления с FIFO очередью"""
+    start_time = datetime.utcnow()
+    db = SessionLocal()
+    
+    try:
+        logger.info("Starting full data collection...")
+        
+        # Шаг 1: Загружаем водителей из API
+        api_drivers = self.client.fetch_all_drivers()
+        if not api_drivers:
+            raise Exception("No drivers fetched from API")
+        
+        # Шаг 2: Обновляем список водителей
+        drivers_result = self.update_drivers_list(db, api_drivers)
+        
+        # Шаг 2.5: Добавляем новых водителей в очередь
+        for driver_id in drivers_result.get('new_driver_ids', []):
+            crud.add_new_driver_to_queue(db, driver_id, is_new=True)
+        
+        # Шаг 3: Получаем следующих водителей из очереди (FIFO)
+        queue_entries = crud.get_next_drivers_for_update(
+            db, 
+            batch_size=settings.ORDERS_UPDATE_BATCH_SIZE
+        )
+        
+        if queue_entries:
+            # Получаем объекты водителей из БД
+            driver_ids = [entry.driver_id for entry in queue_entries]
+            drivers_to_update = db.query(models.Driver).filter(
+                models.Driver.driver_id.in_(driver_ids)
+            ).all()
+            
+            # Обновляем заказы
+            orders_result = self.update_orders_for_drivers(db, drivers_to_update)
+            
+            # Обновляем время в очереди
+            for driver in drivers_to_update:
+                crud.update_queue_timestamp(db, driver.driver_id)
+            
+            logger.info(f"Updated orders for {orders_result['updated']} drivers from queue")
+        else:
+            orders_result = {'updated': 0, 'errors': []}
+            logger.info("No drivers in update queue")
+        
+        # Шаг 4: Сохраняем лог
+        crud.create_collection_log(
+            db,
+            status='success',
+            new_drivers_added=drivers_result['new'],
+            status_updated=drivers_result['updated'],
+            orders_updated=orders_result['updated'],
+            api_calls_used=len(api_drivers) // 500 + 1 + len(queue_entries),
+            errors=orders_result['errors']
+        )
+        
+        return {
+            'success': True,
+            'new_drivers': drivers_result['new'],
+            'status_updates': drivers_result['updated'],
+            'orders_updated': orders_result['updated'],
+            'queue_stats': crud.get_queue_stats(db),
+            'errors': orders_result['errors']
+        }
+        
+    except Exception as e:
+        logger.error(f"Collection failed: {e}")
+        crud.create_collection_log(
+            db,
+            status='failed',
+            error_message=str(e)
+        )
+        return {
+            'success': False,
+            'error': str(e)
+        }
+    finally:
+        db.close()
+
 class DataCollector:
     """Сборщик данных из Яндекс.Такси"""
     
@@ -29,11 +108,20 @@ class DataCollector:
         now_utc = datetime.utcnow()
         new_count = 0
         status_updated = 0
+        new_driver_ids = []  # ← Добавляем список ID новых водителей
         
         for api_driver in api_drivers:
             driver_profile = api_driver.get('driver_profile', {})
             account = api_driver.get('account', {}) or api_driver.get('accounts', [{}])[0] if api_driver.get('accounts') else {}
             current_status = api_driver.get('current_status', {})
+
+            if not existing:
+                driver_data['last_status_updated'] = now_utc
+                crud.save_driver(db, driver_data)
+                new_count += 1
+                new_driver_ids.append(driver_id)  # ← Запоминаем ID
+                logger.info(f"New driver added: {driver_data['first_name']} {driver_data['last_name']}")
+            else:
             
             driver_id = driver_profile.get('id', '')
             if not driver_id:
@@ -81,7 +169,7 @@ class DataCollector:
                     status_updated += 1
                     logger.info(f"Status updated for {driver_data['first_name']}: {work_status}")
         
-        return {'new': new_count, 'updated': status_updated}
+        return {'new': new_count, 'updated': status_updated, 'new_driver_ids': new_driver_ids}
     
     def update_orders_for_drivers(self, db: Session, drivers: List[models.Driver]) -> Dict:
         """
