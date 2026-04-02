@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func  # ← добавляем or_ и func
+from sqlalchemy import or_, func, update as sql_update
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import logging
@@ -136,6 +137,108 @@ def search_drivers(db: Session, query: str) -> List[models.Driver]:
             models.Driver.last_name.ilike(search_pattern)
         )
     ).limit(20).all()
+
+def init_update_queue(db: Session):
+    """Инициализирует очередь обновления (запустить один раз)"""
+    # Получаем всех активных водителей
+    drivers = db.query(models.Driver).filter(
+        models.Driver.work_status != 'fired'
+    ).all()
+    
+    count = 0
+    for driver in drivers:
+        # Проверяем, есть ли в очереди
+        existing = db.query(models.UpdateQueue).filter(
+            models.UpdateQueue.driver_id == driver.driver_id
+        ).first()
+        
+        if not existing:
+            # Определяем приоритет: новые водители (менее 30 дней) получают приоритет
+            priority = 0
+            if driver.created_date:
+                created = datetime.strptime(driver.created_date[:10], '%Y-%m-%d') if driver.created_date else None
+                if created and (datetime.utcnow() - created).days < 30:
+                    priority = 1
+            
+            queue_entry = models.UpdateQueue(
+                driver_id=driver.driver_id,
+                priority=priority,
+                last_updated=driver.last_updated or datetime.utcnow()
+            )
+            db.add(queue_entry)
+            count += 1
+    
+    db.commit()
+    logger.info(f"Initialized update queue with {count} drivers")
+    return count
+
+def get_next_drivers_for_update(db: Session, batch_size: int = 100) -> List[models.UpdateQueue]:
+    """
+    Получает следующих водителей из очереди для обновления (FIFO)
+    Сначала водители с высоким приоритетом, затем по дате последнего обновления
+    """
+    # Получаем водителей с высоким приоритетом (новые)
+    priority_drivers = db.query(models.UpdateQueue).filter(
+        models.UpdateQueue.priority == 1
+    ).order_by(
+        models.UpdateQueue.last_updated.asc()
+    ).limit(batch_size).all()
+    
+    if len(priority_drivers) >= batch_size:
+        return priority_drivers
+    
+    # Если высокоприоритетных меньше, добираем обычными
+    remaining = batch_size - len(priority_drivers)
+    regular_drivers = db.query(models.UpdateQueue).filter(
+        models.UpdateQueue.priority == 0
+    ).order_by(
+        models.UpdateQueue.last_updated.asc()
+    ).limit(remaining).all()
+    
+    return priority_drivers + regular_drivers
+
+def update_queue_timestamp(db: Session, driver_id: str):
+    """Обновляет время последнего обновления в очереди"""
+    db.query(models.UpdateQueue).filter(
+        models.UpdateQueue.driver_id == driver_id
+    ).update({'last_updated': datetime.utcnow()})
+    db.commit()
+
+def add_new_driver_to_queue(db: Session, driver_id: str, is_new: bool = True):
+    """Добавляет нового водителя в очередь"""
+    existing = db.query(models.UpdateQueue).filter(
+        models.UpdateQueue.driver_id == driver_id
+    ).first()
+    
+    if not existing:
+        queue_entry = models.UpdateQueue(
+            driver_id=driver_id,
+            priority=1 if is_new else 0,  # Новые водители получают высокий приоритет
+            last_updated=datetime.utcnow()
+        )
+        db.add(queue_entry)
+        db.commit()
+        logger.info(f"Added new driver to queue: {driver_id}")
+
+def get_queue_stats(db: Session) -> Dict[str, Any]:
+    """Получает статистику очереди"""
+    total = db.query(models.UpdateQueue).count()
+    high_priority = db.query(models.UpdateQueue).filter(
+        models.UpdateQueue.priority == 1
+    ).count()
+    low_priority = total - high_priority
+    
+    # Среднее время ожидания
+    avg_wait = db.query(func.avg(
+        func.extract('epoch', datetime.utcnow() - models.UpdateQueue.last_updated)
+    )).scalar() or 0
+    
+    return {
+        'total': total,
+        'high_priority': high_priority,
+        'low_priority': low_priority,
+        'avg_wait_hours': round(avg_wait / 3600, 1)
+    }
 
 # ========== ЛОГИ ==========
 
