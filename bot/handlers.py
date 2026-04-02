@@ -60,6 +60,31 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Создаем контекст для вызова функции экспорта
         await export_drivers(query.message, context)
 
+async def queue_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /queue - статистика очереди обновления"""
+    if update.effective_user.id not in settings.ADMIN_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для этой команды")
+        return
+    
+    db = SessionLocal()
+    try:
+        stats = crud.get_queue_stats(db)
+        
+        response = (
+            "📋 *Статистика очереди обновления:*\n\n"
+            f"👥 Всего в очереди: {stats['total']}\n"
+            f"⭐ Высокий приоритет (новые): {stats['high_priority']}\n"
+            f"📊 Обычный приоритет: {stats['low_priority']}\n"
+            f"⏱️ Среднее время ожидания: {stats['avg_wait_hours']} часов\n\n"
+            f"_Обновление происходит по принципу FIFO:_\n"
+            f"_сначала обновляются водители, которые дольше всех ждали_"
+        )
+        
+        await update.message.reply_text(response, parse_mode='Markdown')
+        
+    finally:
+        db.close()
+
 async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт всех водителей в CSV файл (без pandas)"""
     if update.effective_user.id not in settings.ADMIN_IDS:
