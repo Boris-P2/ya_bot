@@ -19,8 +19,9 @@ from bot.handlers import (
     get_drivers_by_status,
     get_driver_info,
     unknown,
+    button_callback,
     export_drivers,
-    button_callback
+    queue_stats,  # ← ДОБАВИТЬ ЭТУ СТРОКУ
 )
 
 logging.basicConfig(
@@ -52,6 +53,7 @@ def run_bot():
     application.add_handler(CommandHandler("driver", get_driver_info))
     application.add_handler(CommandHandler("recent", get_recent_updates))
     application.add_handler(CommandHandler("export", export_drivers))
+    application.add_handler(CommandHandler("queue", queue_stats))
 
     # Обработчик кнопок
     application.add_handler(CallbackQueryHandler(button_callback))
