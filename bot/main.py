@@ -1,11 +1,12 @@
 import logging
+import time
 from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     filters,
-    CallbackQueryHandler  # ← Убедитесь, что этот импорт есть
+    CallbackQueryHandler
 )
 from shared.config import settings
 from bot.handlers import (
@@ -21,7 +22,7 @@ from bot.handlers import (
     unknown,
     button_callback,
     export_drivers,
-    queue_stats,  # ← ДОБАВИТЬ ЭТУ СТРОКУ
+    queue_stats,
 )
 
 logging.basicConfig(
@@ -29,6 +30,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
 
 def run_bot():
     """Запуск Telegram бота"""
@@ -54,7 +56,7 @@ def run_bot():
     application.add_handler(CommandHandler("recent", get_recent_updates))
     application.add_handler(CommandHandler("export", export_drivers))
     application.add_handler(CommandHandler("queue", queue_stats))
-
+    
     # Обработчик кнопок
     application.add_handler(CallbackQueryHandler(button_callback))
     
@@ -65,5 +67,21 @@ def run_bot():
     logger.info("Bot is running. Press Ctrl+C to stop...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
+
+def run_bot_with_retry():
+    """Запуск бота с повторными попытками"""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            run_bot()
+            break
+        except Exception as e:
+            logger.error(f"Bot failed (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(5)
+            else:
+                raise
+
+
 if __name__ == "__main__":
-    run_bot()
+    run_bot_with_retry()
