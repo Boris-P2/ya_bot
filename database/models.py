@@ -26,16 +26,6 @@ class Driver(Base):
     priority_score = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-class UpdateQueue(Base):
-    """Очередь обновления заказов (FIFO)"""
-    __tablename__ = 'update_queue'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    driver_id = Column(String(100), unique=True, index=True, nullable=False)
-    last_updated = Column(DateTime, default=datetime.utcnow)
-    priority = Column(Integer, default=0)  # 0 - обычный, 1 - высокий приоритет (новые)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
 class CollectionLog(Base):
     """Логирование сборов"""
     __tablename__ = 'collection_logs'
@@ -52,12 +42,11 @@ class CollectionLog(Base):
     error_message = Column(Text)
 
 class UpdateQueue(Base):
-    """Очередь для приоритетного обновления"""
+    """Очередь для приоритетного обновления (FIFO)"""
     __tablename__ = 'update_queue'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    driver_id = Column(String(100), index=True)
-    priority_score = Column(Integer, default=0)
-    queued_at = Column(DateTime, default=datetime.utcnow)
-    processed_at = Column(DateTime)
-    status = Column(String(20), default='pending')  # pending, processing, completed, failed
+    driver_id = Column(String(100), unique=True, index=True, nullable=False)
+    priority = Column(Integer, default=0)  # 0 - обычный, 1 - высокий приоритет (новые)
+    last_updated = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
