@@ -11,30 +11,30 @@ from shared.config import settings
 logger = logging.getLogger(__name__)
 
 def run_full_update(self) -> Dict:
-    """Запускает полный цикл обновления с FIFO очередью"""
+    """
+    Запускает полный цикл обновления с FIFO очередью
+    """
     start_time = datetime.utcnow()
     db = SessionLocal()
     
     try:
         logger.info("Starting full data collection...")
         
-        # Шаг 1: Загружаем водителей из API
+        # Шаг 1: Загружаем водителей из API (всегда)
         api_drivers = self.client.fetch_all_drivers()
         if not api_drivers:
             raise Exception("No drivers fetched from API")
         
-        # Шаг 2: Обновляем список водителей
+        # Шаг 2: Обновляем список водителей (всегда)
         drivers_result = self.update_drivers_list(db, api_drivers)
         
-        # Шаг 2.5: Добавляем новых водителей в очередь
-        for driver_id in drivers_result.get('new_driver_ids', []):
-            crud.add_new_driver_to_queue(db, driver_id, is_new=True)
+        # Шаг 3: Получаем следующих водителей из ОЧЕРЕДИ (FIFO)
+        # ВАЖНО: используем queue, а не старую функцию!
+        from database.crud import get_next_drivers_for_update, update_queue_timestamp
         
-        # Шаг 3: Получаем следующих водителей из очереди (FIFO)
-        queue_entries = crud.get_next_drivers_for_update(
-            db, 
-            batch_size=settings.ORDERS_UPDATE_BATCH_SIZE
-        )
+        queue_entries = get_next_drivers_for_update(db, batch_size=100)
+        
+        orders_result = {'updated': 0, 'errors': []}
         
         if queue_entries:
             # Получаем объекты водителей из БД
@@ -46,13 +46,12 @@ def run_full_update(self) -> Dict:
             # Обновляем заказы
             orders_result = self.update_orders_for_drivers(db, drivers_to_update)
             
-            # Обновляем время в очереди
+            # Обновляем время в очереди для обновленных водителей
             for driver in drivers_to_update:
-                crud.update_queue_timestamp(db, driver.driver_id)
+                update_queue_timestamp(db, driver.driver_id)
             
             logger.info(f"Updated orders for {orders_result['updated']} drivers from queue")
         else:
-            orders_result = {'updated': 0, 'errors': []}
             logger.info("No drivers in update queue")
         
         # Шаг 4: Сохраняем лог
@@ -71,7 +70,6 @@ def run_full_update(self) -> Dict:
             'new_drivers': drivers_result['new'],
             'status_updates': drivers_result['updated'],
             'orders_updated': orders_result['updated'],
-            'queue_stats': crud.get_queue_stats(db),
             'errors': orders_result['errors']
         }
         
