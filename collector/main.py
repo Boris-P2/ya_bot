@@ -182,61 +182,78 @@ class DataCollector:
         
         return {'updated': updated_count, 'errors': errors}
     
-    def run_full_update(self) -> Dict:
-        """
-        Запускает полный цикл обновления
-        """
-        start_time = datetime.utcnow()
-        db = SessionLocal()
+def run_full_update(self) -> Dict:
+    """
+    Запускает полный цикл обновления с FIFO очередью
+    """
+    start_time = datetime.utcnow()
+    db = SessionLocal()
+    
+    try:
+        logger.info("Starting full data collection...")
         
-        try:
-            logger.info("Starting full data collection...")
+        # Шаг 1: Загружаем водителей из API
+        api_drivers = self.client.fetch_all_drivers()
+        if not api_drivers:
+            raise Exception("No drivers fetched from API")
+        
+        # Шаг 2: Обновляем список водителей
+        drivers_result = self.update_drivers_list(db, api_drivers)
+        
+        # Шаг 3: Получаем следующих водителей из ОЧЕРЕДИ (FIFO)
+        from database.crud import get_next_drivers_for_update, update_queue_timestamp
+        
+        queue_entries = get_next_drivers_for_update(db, batch_size=500)
+        
+        orders_result = {'updated': 0, 'errors': []}
+        
+        if queue_entries:
+            # Получаем объекты водителей из БД по ID из очереди
+            driver_ids = [entry.driver_id for entry in queue_entries]
+            drivers_to_update = db.query(models.Driver).filter(
+                models.Driver.driver_id.in_(driver_ids)
+            ).all()
             
-            # Шаг 1: Загружаем водителей из API
-            api_drivers = self.client.fetch_all_drivers()
-            if not api_drivers:
-                raise Exception("No drivers fetched from API")
+            # Обновляем заказы
+            orders_result = self.update_orders_for_drivers(db, drivers_to_update)
             
-            # Шаг 2: Обновляем список водителей
-            drivers_result = self.update_drivers_list(db, api_drivers)
+            # Обновляем время последнего обновления в очереди
+            for driver in drivers_to_update:
+                update_queue_timestamp(db, driver.driver_id)
             
-            # Шаг 3: Получаем водителей для обновления заказов
-            drivers_to_update = crud.get_drivers_for_update(db, max_count=500)
-            
-            # Шаг 4: Обновляем заказы
-            orders_result = {'updated': 0, 'errors': []}
-            if drivers_to_update:
-                orders_result = self.update_orders_for_drivers(db, drivers_to_update)
-            
-            # Шаг 5: Сохраняем лог
-            crud.create_collection_log(
-                db,
-                status='success',
-                new_drivers_added=drivers_result['new'],
-                status_updated=drivers_result['updated'],
-                orders_updated=orders_result['updated'],
-                api_calls_used=len(api_drivers) // 500 + 1 + len(drivers_to_update),
-                errors=orders_result['errors']
-            )
-            
-            return {
-                'success': True,
-                'new_drivers': drivers_result['new'],
-                'status_updates': drivers_result['updated'],
-                'orders_updated': orders_result['updated'],
-                'errors': orders_result['errors']
-            }
-            
-        except Exception as e:
-            logger.error(f"Collection failed: {e}")
-            crud.create_collection_log(
-                db,
-                status='failed',
-                error_message=str(e)
-            )
-            return {
-                'success': False,
-                'error': str(e)
-            }
-        finally:
-            db.close()
+            logger.info(f"Updated orders for {orders_result['updated']} drivers from queue")
+        else:
+            logger.info("No drivers in update queue")
+        
+        # Шаг 4: Сохраняем лог
+        crud.create_collection_log(
+            db,
+            status='success',
+            new_drivers_added=drivers_result['new'],
+            status_updated=drivers_result['updated'],
+            orders_updated=orders_result['updated'],
+            api_calls_used=len(api_drivers) // 500 + 1 + len(queue_entries),
+            errors=orders_result['errors']
+        )
+        
+        return {
+            'success': True,
+            'new_drivers': drivers_result['new'],
+            'status_updates': drivers_result['updated'],
+            'orders_updated': orders_result['updated'],
+            'errors': orders_result['errors']
+        }
+        
+    except Exception as e:
+        logger.error(f"Collection failed: {e}")
+        crud.create_collection_log(
+            db,
+            status='failed',
+            error_message=str(e)
+        )
+        return {
+            'success': False,
+            'error': str(e)
+        }
+    finally:
+        db.close()
