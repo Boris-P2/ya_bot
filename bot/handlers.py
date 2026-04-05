@@ -382,6 +382,25 @@ async def get_recent_updates(update: Update, context: ContextTypes.DEFAULT_TYPE)
     finally:
         db.close()
 
+async def update_phones(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /update_phones - принудительное обновление телефонов (админ)"""
+    if update.effective_user.id not in settings.ADMIN_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для этой команды")
+        return
+    
+    await update.message.reply_text("📞 Начинаю обновление номеров телефонов...")
+    
+    # Запускаем в фоне, чтобы не блокировать бота
+    collector = DataCollector()
+    result = collector.update_driver_phones(batch_size=200)
+    
+    await update.message.reply_text(
+        f"✅ Обновление завершено:\n"
+        f"📞 Обновлено: {result['updated']}\n"
+        f"⚠️ Не найдено: {result['skipped']}\n"
+        f"❌ Ошибок: {len(result['errors'])}"
+    )
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /help"""
     help_text = """
