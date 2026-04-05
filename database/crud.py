@@ -250,6 +250,53 @@ def get_queue_stats(db: Session) -> Dict[str, Any]:
         'avg_wait_hours': round(avg_wait / 3600, 1)
     }
 
+def get_drivers_needing_phone_update(db: Session, months: int = 1, limit: int = None) -> List[models.Driver]:
+    """
+    Получает водителей, которым нужно обновить номер телефона:
+    1. У кого phone IS NULL (никогда не получали)
+    2. У кого phone_updated_at старше months месяцев
+    """
+    cutoff_date = datetime.utcnow() - timedelta(days=months * 30)
+    
+    query = db.query(models.Driver).filter(
+        db.or_(
+            models.Driver.phone.is_(None),
+            models.Driver.phone == '',
+            models.Driver.phone_updated_at < cutoff_date
+        )
+    )
+    
+    if limit:
+        query = query.limit(limit)
+    
+    return query.all()
+
+def update_driver_phone(db: Session, driver_id: str, phone: str):
+    """Обновляет номер телефона водителя"""
+    driver = db.query(models.Driver).filter(
+        models.Driver.driver_id == driver_id
+    ).first()
+    
+    if driver:
+        driver.phone = phone
+        driver.phone_updated_at = datetime.utcnow()
+        db.commit()
+        return True
+    return False
+
+def get_api_calls_today(db: Session) -> int:
+    """Возвращает количество API вызовов, сделанных сегодня"""
+    today = datetime.utcnow().date()
+    start_of_day = datetime(today.year, today.month, today.day)
+    
+    total_calls = db.query(models.CollectionLog).filter(
+        models.CollectionLog.started_at >= start_of_day
+    ).with_entities(
+        db.func.sum(models.CollectionLog.api_calls_used)
+    ).scalar() or 0
+    
+    return total_calls
+
 # ========== ЛОГИ ==========
 
 def create_collection_log(
