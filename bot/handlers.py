@@ -10,6 +10,7 @@ from database.session import SessionLocal
 from database import crud
 from database import models  # <-- ДОБАВЛЯЕМ ЭТОТ ИМПОРТ
 from shared.config import settings
+from collector.main import DataCollector  # ← ДОБАВИТЬ ЭТУ СТРОКУ
 
 logger = logging.getLogger(__name__)
 
@@ -388,18 +389,21 @@ async def update_phones(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ У вас нет прав для этой команды")
         return
     
-    await update.message.reply_text("📞 Начинаю обновление номеров телефонов...")
+    await update.message.reply_text("📞 Начинаю обновление номеров телефонов...\n⚠️ Это может занять несколько минут")
     
-    # Запускаем в фоне, чтобы не блокировать бота
-    collector = DataCollector()
-    result = collector.update_driver_phones(batch_size=200)
-    
-    await update.message.reply_text(
-        f"✅ Обновление завершено:\n"
-        f"📞 Обновлено: {result['updated']}\n"
-        f"⚠️ Не найдено: {result['skipped']}\n"
-        f"❌ Ошибок: {len(result['errors'])}"
-    )
+    try:
+        collector = DataCollector()
+        result = collector.update_all_driver_phones(batch_size=100)  # ← замените на update_all_driver_phones
+        
+        await update.message.reply_text(
+            f"✅ Обновление завершено!\n\n"
+            f"📞 Обновлено номеров: {result['updated']}\n"
+            f"❌ Ошибок: {len(result['errors'])}\n\n"
+            f"_Номера телефонов сохранены в базе данных_",
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка при обновлении: {str(e)}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /help"""
