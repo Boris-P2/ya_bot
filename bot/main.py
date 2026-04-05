@@ -23,7 +23,7 @@ from bot.handlers import (
     button_callback,
     export_drivers,
     queue_stats,
-    update_phones,
+    update_phones,  # ← импорт добавлен
 )
 
 logging.basicConfig(
@@ -57,6 +57,7 @@ def run_bot():
     application.add_handler(CommandHandler("recent", get_recent_updates))
     application.add_handler(CommandHandler("export", export_drivers))
     application.add_handler(CommandHandler("queue", queue_stats))
+    application.add_handler(CommandHandler("update_phones", update_phones))  # ← ДОБАВИТЬ ЭТУ СТРОКУ
     
     # Обработчик кнопок
     application.add_handler(CallbackQueryHandler(button_callback))
