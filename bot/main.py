@@ -23,6 +23,7 @@ from bot.handlers import (
     button_callback,
     export_drivers,
     queue_stats,
+    update_phones,
 )
 
 logging.basicConfig(
