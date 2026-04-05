@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Dict, List, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -113,6 +114,48 @@ class DataCollector:
                 errors.append(error_msg)
         
         return {'updated': updated_count, 'errors': errors}
+    
+    def update_all_driver_phones(self, batch_size: int = 2000) -> Dict:
+        """
+        Обновляет номера телефонов для всех водителей
+        batch_size - количество водителей за один запуск (чтобы не превысить лимиты API)
+        """
+        db = SessionLocal()
+        updated = 0
+        errors = []
+        
+        try:
+            # Получаем водителей, у которых еще нет номера телефона
+            drivers = db.query(models.Driver).filter(
+                models.Driver.phone.is_(None)  # только те, у кого нет телефона
+            ).limit(batch_size).all()
+            
+            logger.info(f"Updating phones for {len(drivers)} drivers...")
+            
+            for driver in drivers:
+                phone = self.client.get_driver_phone(driver.driver_id)
+                
+                if phone:
+                    driver.phone = phone
+                    db.commit()
+                    updated += 1
+                    logger.info(f"Phone updated for {driver.first_name} {driver.last_name}: {phone}")
+                else:
+                    # Если телефон не получен, отмечаем пустой строкой, чтобы не запрашивать снова
+                    driver.phone = ''
+                    db.commit()
+                    logger.warning(f"No phone found for {driver.first_name} {driver.last_name}")
+                
+                # Не превышаем лимиты API
+                time.sleep(0.5)
+            
+            return {'updated': updated, 'errors': errors}
+            
+        except Exception as e:
+            logger.error(f"Failed to update phones: {e}")
+            return {'updated': updated, 'errors': [str(e)]}
+        finally:
+            db.close()
     
     def run_full_update(self) -> Dict:
         """
