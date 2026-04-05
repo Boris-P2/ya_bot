@@ -21,6 +21,8 @@ class Driver(Base):
     orders_count = Column(Integer, default=0)
     last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_status_updated = Column(DateTime, default=datetime.utcnow)
+    phone = Column(String(20), nullable=True)
+    phone_updated_at = Column(DateTime, nullable=True)
     
     # Метаданные
     priority_score = Column(Integer, default=0)
