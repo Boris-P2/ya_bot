@@ -15,7 +15,37 @@ class YandexTaxiClient:
         self.park_id = park_id
         self.api_url_drivers = "https://fleet-api.taxi.yandex.net/v1/parks/driver-profiles/list"
         self.api_url_transactions = "https://fleet-api.taxi.yandex.net/v2/parks/driver-profiles/transactions/list"
+
+    def get_driver_phone(self, driver_id: str) -> Optional[str]:
+        """Получает номер телефона водителя по driver_id"""
+        url = "https://fleet-api.taxi.yandex.net/v2/parks/contractors/driver-profile"
         
+        headers = {
+            "X-API-Key": self.api_key,
+            "X-Client-ID": self.client_id,
+            "X-Park-ID": self.park_id,
+        }
+        
+        params = {
+            "contractor_profile_id": driver_id
+        }
+        
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                # Извлекаем телефон из ответа
+                phone = data.get('person', {}).get('contact_info', {}).get('phone')
+                return phone
+            else:
+                logger.warning(f"Failed to get phone for {driver_id}: HTTP {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting phone for {driver_id}: {e}")
+            return None
+
     def fetch_drivers_page(self, offset: int = 0, limit: int = 500) -> Optional[Dict]:
         """Загружает одну страницу водителей"""
         data = {
