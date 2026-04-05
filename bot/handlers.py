@@ -389,21 +389,28 @@ async def update_phones(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ У вас нет прав для этой команды")
         return
     
-    await update.message.reply_text("📞 Начинаю обновление номеров телефонов...\n⚠️ Это может занять несколько минут")
+    await update.message.reply_text("📞 Начинаю обновление номеров телефонов в фоновом режиме...\n⚠️ Это может занять несколько минут. Я сообщу о завершении.")
     
-    try:
-        collector = DataCollector()
-        result = collector.update_all_driver_phones(batch_size=100)  # ← замените на update_all_driver_phones
-        
-        await update.message.reply_text(
-            f"✅ Обновление завершено!\n\n"
-            f"📞 Обновлено номеров: {result['updated']}\n"
-            f"❌ Ошибок: {len(result['errors'])}\n\n"
-            f"_Номера телефонов сохранены в базе данных_",
-            parse_mode='Markdown'
-        )
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка при обновлении: {str(e)}")
+    # Запускаем в фоновой задаче, не блокируя бота
+    async def run_update():
+        try:
+            # Запускаем синхронную функцию в отдельном потоке
+            result = await asyncio.to_thread(
+                DataCollector().update_all_driver_phones,
+                batch_size=100
+            )
+            await update.message.reply_text(
+                f"✅ Обновление завершено!\n\n"
+                f"📞 Обновлено номеров: {result['updated']}\n"
+                f"❌ Ошибок: {len(result['errors'])}\n\n"
+                f"_Номера телефонов сохранены в базе данных_",
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка при обновлении: {str(e)}")
+    
+    # Запускаем фоновую задачу
+    asyncio.create_task(run_update())
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /help"""
