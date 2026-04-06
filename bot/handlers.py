@@ -387,33 +387,71 @@ async def get_recent_updates(update: Update, context: ContextTypes.DEFAULT_TYPE)
         db.close()
 
 async def update_phones(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /update_phones - принудительное обновление телефонов (админ)"""
+    """Команда /update_phones [days] - обновление телефонов (админ)"""
     if update.effective_user.id not in settings.ADMIN_IDS:
         await update.message.reply_text("⛔ У вас нет прав для этой команды")
         return
     
-    await update.message.reply_text("📞 Начинаю обновление номеров телефонов в фоновом режиме...\n⚠️ Это может занять несколько минут. Я сообщу о завершении.")
+    days = 30
+    if context.args and context.args[0].isdigit():
+        days = int(context.args[0])
     
-    # Запускаем в фоновой задаче, не блокируя бота
-    async def run_update():
+    await update.message.reply_text(f"📞 Начинаю обновление номеров телефонов (за последние {days} дней)...\n⚠️ Это может занять несколько минут")
+    
+    async def run():
         try:
-            # Запускаем синхронную функцию в отдельном потоке
             result = await asyncio.to_thread(
                 DataCollector().update_all_driver_phones,
-                batch_size=100
+                batch_size=500,
+                days_stale=days
             )
             await update.message.reply_text(
                 f"✅ Обновление завершено!\n\n"
-                f"📞 Обновлено номеров: {result['updated']}\n"
+                f"📞 Обновлено: {result['updated']}\n"
                 f"❌ Ошибок: {len(result['errors'])}\n\n"
-                f"_Номера телефонов сохранены в базе данных_",
+                f"_Следующее автоматическое обновление через 6 часов_",
                 parse_mode='Markdown'
             )
         except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка при обновлении: {str(e)}")
+            await update.message.reply_text(f"❌ Ошибка: {str(e)}")
     
-    # Запускаем фоновую задачу
-    asyncio.create_task(run_update())
+    asyncio.create_task(run())
+
+
+async def phone_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /phonestatus - статус телефонов в базе"""
+    if update.effective_user.id not in settings.ADMIN_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для этой команды")
+        return
+    
+    db = SessionLocal()
+    try:
+        total = db.query(models.Driver).count()
+        with_phone = db.query(models.Driver).filter(
+            models.Driver.phone.isnot(None),
+            models.Driver.phone != ''
+        ).count()
+        without_phone = total - with_phone
+        
+        # Последнее обновление
+        last = db.query(models.Driver).filter(
+            models.Driver.phone_updated_at.isnot(None)
+        ).order_by(models.Driver.phone_updated_at.desc()).first()
+        
+        last_time = last.phone_updated_at.strftime('%Y-%m-%d %H:%M') if last and last.phone_updated_at else 'никогда'
+        
+        await update.message.reply_text(
+            f"📊 *Статус телефонов водителей:*\n"
+            f"👥 Всего: {total}\n"
+            f"📞 С телефонами: {with_phone}\n"
+            f"❌ Без телефонов: {without_phone}\n"
+            f"📈 Прогресс: {round(with_phone/total*100, 1)}%\n"
+            f"🕐 Последнее обновление: {last_time}\n\n"
+            f"_Автоматическое обновление: каждые 6 часов (устаревшие > 30 дней)_",
+            parse_mode='Markdown'
+        )
+    finally:
+        db.close()
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /help"""
