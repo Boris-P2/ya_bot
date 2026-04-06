@@ -87,7 +87,7 @@ async def queue_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.close()
 
 async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Экспорт всех водителей в CSV файл (без pandas)"""
+    """Экспорт всех водителей в CSV файл (с телефонами)"""
     if update.effective_user.id not in settings.ADMIN_IDS:
         await update.message.reply_text("⛔ У вас нет прав для этой команды")
         return
@@ -108,12 +108,13 @@ async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         output = io.StringIO()
         writer = csv.writer(output, delimiter=';')
         
-        # Заголовки
+        # Заголовки (добавлена колонка "Телефон")
         writer.writerow([
             'ID', 'Имя', 'Фамилия', 'Статус', 'Заказы', 
             'Баланс', 'Валюта', 'Текущий статус', 
             'Дата регистрации', 'Последняя транзакция', 
-            'Последнее обновление', 'Дата добавления'
+            'Последнее обновление', 'Дата добавления',
+            'Телефон'  # ← НОВАЯ КОЛОНКА
         ])
         
         # Данные
@@ -130,7 +131,8 @@ async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 driver.created_date[:10] if driver.created_date else '',
                 driver.last_transaction_date[:10] if driver.last_transaction_date else '',
                 driver.last_updated.strftime('%Y-%m-%d %H:%M') if driver.last_updated else '',
-                driver.created_at.strftime('%Y-%m-%d %H:%M') if driver.created_at else ''
+                driver.created_at.strftime('%Y-%m-%d %H:%M') if driver.created_at else '',
+                driver.phone if driver.phone else ''  # ← ТЕЛЕФОН
             ])
         
         # Конвертируем в bytes для отправки
@@ -144,6 +146,7 @@ async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
             filename=f'drivers_export_{datetime.now().strftime("%Y%m%d_%H%M")}.csv',
             caption=f'📊 Экспорт данных о водителях\n'
                     f'Всего записей: {len(drivers)}\n'
+                    f'📞 С телефонами: {len([d for d in drivers if d.phone])}\n'
                     f'Дата: {datetime.now().strftime("%Y-%m-%d %H:%M")}'
         )
         
