@@ -12,6 +12,20 @@ from shared.config import settings
 logger = logging.getLogger(__name__)
 
 
+import logging
+import time
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+from sqlalchemy.orm import Session
+
+from collector.yandex_client import YandexTaxiClient
+from database import crud, models
+from database.session import SessionLocal
+from shared.config import settings
+
+logger = logging.getLogger(__name__)
+
+
 class DataCollector:
     """Сборщик данных из Яндекс.Такси"""
     
@@ -115,39 +129,52 @@ class DataCollector:
         
         return {'updated': updated_count, 'errors': errors}
     
-    def update_all_driver_phones(self, batch_size: int = 2000) -> Dict:
+    def update_all_driver_phones(self, batch_size: int = 500, days_stale: int = 30) -> Dict:
         """
-        Обновляет номера телефонов для всех водителей
-        batch_size - количество водителей за один запуск (чтобы не превысить лимиты API)
+        Обновляет номера телефонов для водителей
+        - phone IS NULL (никогда не получали)
+        - phone_updated_at старше days_stale дней (по умолчанию 30)
         """
         db = SessionLocal()
         updated = 0
         errors = []
         
         try:
-            # Получаем водителей, у которых еще нет номера телефона
+            cutoff_date = datetime.utcnow() - timedelta(days=days_stale)
+            
             drivers = db.query(models.Driver).filter(
-                models.Driver.phone.is_(None)  # только те, у кого нет телефона
+                db.or_(
+                    models.Driver.phone.is_(None),
+                    models.Driver.phone == '',
+                    models.Driver.phone_updated_at < cutoff_date
+                )
+            ).order_by(
+                models.Driver.phone_updated_at.asc().nulls_first()
             ).limit(batch_size).all()
             
-            logger.info(f"Updating phones for {len(drivers)} drivers...")
+            if not drivers:
+                logger.info("No drivers need phone update")
+                return {'updated': 0, 'errors': []}
+            
+            logger.info(f"Updating phones for {len(drivers)} drivers (stale > {days_stale} days)...")
             
             for driver in drivers:
                 phone = self.client.get_driver_phone(driver.driver_id)
                 
                 if phone:
                     driver.phone = phone
+                    driver.phone_updated_at = datetime.utcnow()
                     db.commit()
                     updated += 1
-                    logger.info(f"Phone updated for {driver.first_name} {driver.last_name}: {phone}")
+                    logger.info(f"✅ Phone updated for {driver.first_name} {driver.last_name}: {phone}")
                 else:
-                    # Если телефон не получен, отмечаем пустой строкой, чтобы не запрашивать снова
-                    driver.phone = ''
+                    driver.phone_updated_at = datetime.utcnow()
+                    if not driver.phone:
+                        driver.phone = ''
                     db.commit()
-                    logger.warning(f"No phone found for {driver.first_name} {driver.last_name}")
+                    logger.warning(f"❌ No phone found for {driver.first_name} {driver.last_name}")
                 
-                # Не превышаем лимиты API
-                time.sleep(0.5)
+                time.sleep(0.3)
             
             return {'updated': updated, 'errors': errors}
             
