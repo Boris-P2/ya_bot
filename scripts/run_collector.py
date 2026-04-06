@@ -4,11 +4,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import logging
 import time
+from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from collector.main import DataCollector
 from shared.config import settings
-from database.models import Base
-from database.session import engine
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,33 +26,51 @@ def init_database():
         raise
 
 def collect_job():
-    """Задача для периодического сбора данных"""
+    """Задача для периодического сбора данных (заказы)"""
     logger.info("Starting scheduled data collection...")
     collector = DataCollector()
     result = collector.run_full_update()
     logger.info(f"Collection completed: {result}")
 
+def phone_update_job():
+    """Задача для периодического обновления телефонов"""
+    logger.info("Starting scheduled phone update...")
+    collector = DataCollector()
+    result = collector.update_all_driver_phones(batch_size=500, days_stale=30)
+    logger.info(f"Phone update completed: {result['updated']} updated")
+
 if __name__ == "__main__":
-    print("🚀 Starting Yandex Taxi Data Collector...")
+    print("🚀 Starting Yandex Taxi Data Collector with Phone Updater...")
     
     # Проверяем переменные окружения
     if not settings.DATABASE_URL:
         logger.error("DATABASE_URL is not set!")
         sys.exit(1)
     
-    # Инициализируем базу данных
-    init_database()
+    if not settings.YA_API_KEY:
+        logger.error("YA_API_KEY is not set!")
+        sys.exit(1)
     
-    # Запускаем планировщик
+    # Планировщик для основного сбора (заказы) - каждые 6 часов
     scheduler = BackgroundScheduler()
     scheduler.add_job(
         collect_job,
         'interval',
-        seconds=settings.COLLECTION_INTERVAL,
+        hours=6,
         id='data_collection'
     )
+    
+    # Планировщик для обновления телефонов - каждые 6 часов (со сдвигом 3 часа)
+    scheduler.add_job(
+        phone_update_job,
+        'interval',
+        hours=6,
+        id='phone_update',
+        next_run_time=datetime.now() + timedelta(hours=3)
+    )
+    
     scheduler.start()
-    logger.info(f"Scheduler started. Collection interval: {settings.COLLECTION_INTERVAL} seconds")
+    logger.info("Scheduler started. Collection interval: 6 hours, Phone update interval: 6 hours")
     
     # Выполняем первый сбор сразу
     collect_job()
