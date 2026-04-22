@@ -1,22 +1,9 @@
 import logging
 import time
 from typing import Dict, List, Optional
-from datetime import datetime
-from sqlalchemy.orm import Session
-
-from collector.yandex_client import YandexTaxiClient
-from database import crud, models
-from database.session import SessionLocal
-from shared.config import settings
-
-logger = logging.getLogger(__name__)
-
-
-import logging
-import time
-from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from collector.yandex_client import YandexTaxiClient
 from database import crud, models
@@ -143,7 +130,7 @@ class DataCollector:
             cutoff_date = datetime.utcnow() - timedelta(days=days_stale)
             
             drivers = db.query(models.Driver).filter(
-                db.or_(
+                or_(
                     models.Driver.phone.is_(None),
                     models.Driver.phone == '',
                     models.Driver.phone_updated_at < cutoff_date
