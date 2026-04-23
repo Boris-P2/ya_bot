@@ -27,6 +27,7 @@ class DataCollector:
         
     def update_drivers_list(self, db: Session, api_drivers: List[Dict]) -> Dict:
         """Обновляет список водителей"""
+        logger.info(f"🔄 Начало обновления списка. Получено водителей от API: {len(api_drivers)}")
         now_utc = datetime.utcnow()
         new_count = 0
         status_updated = 0
@@ -62,7 +63,7 @@ class DataCollector:
                 crud.save_driver(db, driver_data)
                 new_count += 1
                 new_driver_ids.append(driver_id)
-                logger.info(f"New driver added: {driver_data['first_name']} {driver_data['last_name']}")
+                logger.info(f"✨ Новый водитель добавлен: {driver_data['first_name']} {driver_data['last_name']} (ID: {driver_id[:8]}...)")
             else:
                 # Существующий водитель
                 needs_update = False
@@ -80,8 +81,9 @@ class DataCollector:
                     driver_data['last_status_updated'] = now_utc
                     crud.save_driver(db, driver_data)
                     status_updated += 1
-                    logger.info(f"Status updated for {driver_data['first_name']}: {work_status}")
+                    logger.info(f"🔄 Статус обновлён для {driver_data['first_name']}: {work_status}")
         
+        logger.info(f"📊 Итог обновления списка: +{new_count} новых, обновлено статусов: {status_updated}")
         return {'new': new_count, 'updated': status_updated, 'new_driver_ids': new_driver_ids}
     
     def update_orders_for_drivers(self, db: Session, drivers: List[models.Driver]) -> Dict:
@@ -90,7 +92,7 @@ class DataCollector:
         errors = []
         
         for driver in drivers:
-            logger.info(f"Updating orders for {driver.first_name} {driver.last_name}")
+            logger.info(f"📦 Обновление заказов для {driver.first_name} {driver.last_name}")
             
             result = self.client.get_driver_transactions(
                 driver.driver_id,
@@ -99,18 +101,23 @@ class DataCollector:
             
             if result['success']:
                 new_orders = result['orders_count']
+                old_orders = driver.orders_count
                 
-                # Обновляем только если новое значение >= старого
-                if new_orders >= driver.orders_count:
-                    crud.update_driver_orders(db, driver.driver_id, new_orders)
-                    updated_count += 1
-                    logger.info(f"  Orders: {driver.orders_count} -> {new_orders}")
+                # ВСЕГДА обновляем значение в БД
+                crud.update_driver_orders(db, driver.driver_id, new_orders)
+                updated_count += 1
+                
+                # Логируем изменения
+                if new_orders > old_orders:
+                    logger.info(f"  📈 Заказы увеличились: {old_orders} → {new_orders}")
+                elif new_orders < old_orders:
+                    # Это информационное сообщение, а не ошибка
+                    logger.info(f"  📉 Заказы уменьшились (возможно, отпуск): {old_orders} → {new_orders}")
                 else:
-                    error_msg = f"Orders decreased for {driver.driver_id}: {driver.orders_count} -> {new_orders}"
-                    logger.warning(error_msg)
-                    errors.append(error_msg)
+                    logger.info(f"  ➖ Заказы не изменились: {old_orders}")
             else:
-                error_msg = f"API error for {driver.driver_id}: {result.get('error')}"
+                # Ошибка API — НЕ обновляем, чтобы не затереть данные
+                error_msg = f"❌ Ошибка API для {driver.driver_id}: {result.get('error')}"
                 logger.error(error_msg)
                 errors.append(error_msg)
         
@@ -140,10 +147,10 @@ class DataCollector:
             ).limit(batch_size).all()
             
             if not drivers:
-                logger.info("No drivers need phone update")
+                logger.info("📞 Нет водителей, которым нужно обновить телефоны")
                 return {'updated': 0, 'errors': []}
             
-            logger.info(f"Updating phones for {len(drivers)} drivers (stale > {days_stale} days)...")
+            logger.info(f"📞 Обновление телефонов для {len(drivers)} водителей (устаревшие > {days_stale} дней)...")
             
             for driver in drivers:
                 phone = self.client.get_driver_phone(driver.driver_id)
@@ -153,20 +160,21 @@ class DataCollector:
                     driver.phone_updated_at = datetime.utcnow()
                     db.commit()
                     updated += 1
-                    logger.info(f"✅ Phone updated for {driver.first_name} {driver.last_name}: {phone}")
+                    logger.info(f"✅ Телефон обновлён для {driver.first_name} {driver.last_name}: {phone}")
                 else:
                     driver.phone_updated_at = datetime.utcnow()
                     if not driver.phone:
                         driver.phone = ''
                     db.commit()
-                    logger.warning(f"❌ No phone found for {driver.first_name} {driver.last_name}")
+                    logger.warning(f"❌ Телефон не найден для {driver.first_name} {driver.last_name}")
                 
                 time.sleep(0.3)
             
+            logger.info(f"📞 Обновление телефонов завершено: {updated} обновлено")
             return {'updated': updated, 'errors': errors}
             
         except Exception as e:
-            logger.error(f"Failed to update phones: {e}")
+            logger.error(f"Ошибка при обновлении телефонов: {e}")
             return {'updated': updated, 'errors': [str(e)]}
         finally:
             db.close()
@@ -179,7 +187,7 @@ class DataCollector:
         db = SessionLocal()
         
         try:
-            logger.info("Starting full data collection...")
+            logger.info("🚀 Запуск полного цикла сбора данных...")
             
             # Шаг 1: Загружаем водителей из API
             api_drivers = self.client.fetch_all_drivers()
@@ -210,9 +218,9 @@ class DataCollector:
                 for driver in drivers_to_update:
                     update_queue_timestamp(db, driver.driver_id)
                 
-                logger.info(f"Updated orders for {orders_result['updated']} drivers from queue")
+                logger.info(f"✅ Обновлено заказов: {orders_result['updated']} из {len(queue_entries)} водителей")
             else:
-                logger.info("No drivers in update queue")
+                logger.info("Нет водителей в очереди на обновление заказов")
             
             # Шаг 4: Сохраняем лог
             crud.create_collection_log(
@@ -225,6 +233,8 @@ class DataCollector:
                 errors=orders_result['errors']
             )
             
+            logger.info(f"🏁 Полный цикл завершён: +{drivers_result['new']} новых, обновлено статусов {drivers_result['updated']}, заказов {orders_result['updated']}")
+            
             return {
                 'success': True,
                 'new_drivers': drivers_result['new'],
@@ -234,7 +244,7 @@ class DataCollector:
             }
             
         except Exception as e:
-            logger.error(f"Collection failed: {e}")
+            logger.error(f"❌ Сбор данных не удался: {e}")
             crud.create_collection_log(
                 db,
                 status='failed',
