@@ -84,32 +84,40 @@ class YandexTaxiClient:
         limit = 500
         page = 1
         
-        logger.info(f"Fetching all drivers from Yandex API...")
+        logger.info(f"Начинаем загрузку водителей из API Яндекс.Такси...")
         
         while True:
-            logger.debug(f"Fetching page {page} (offset: {offset})")
+            logger.debug(f"Загрузка страницы {page} (offset: {offset})")
             result = self.fetch_drivers_page(offset=offset, limit=limit)
             
             if not result:
+                logger.error(f"Не удалось загрузить страницу {page}, прекращаем")
                 break
             
             drivers = result.get('driver_profiles', [])
             total = result.get('total', 0)
             
             if not drivers:
+                logger.info(f"На странице {page} нет водителей, завершаем")
                 break
             
             all_drivers.extend(drivers)
-            logger.info(f"Fetched {len(drivers)} drivers (total: {len(all_drivers)}/{total})")
+            logger.info(f"✅ Страница {page}: загружено {len(drivers)} водителей (всего в API: {total}, накопилось: {len(all_drivers)})")
             
             if len(drivers) < limit or len(all_drivers) >= total:
+                logger.info(f"Достигнут конец списка: загружено {len(drivers)} < лимита {limit} или накопилось {len(all_drivers)} >= {total}")
                 break
                 
             offset += limit
             page += 1
             time.sleep(0.5)
         
-        logger.info(f"Total drivers fetched: {len(all_drivers)}")
+        logger.info(f"🏁 ИТОГО загружено водителей из API: {len(all_drivers)}")
+        
+        # Дополнительная проверка: если загружено 0, возможно проблема с API ключом
+        if len(all_drivers) == 0:
+            logger.error("❌ API не вернул ни одного водителя! Проверьте API ключи и Park ID")
+        
         return all_drivers
     
     def get_driver_transactions(self, driver_id: str, days_back: int = 30) -> Dict[str, Any]:
