@@ -47,7 +47,7 @@ class YandexTaxiClient:
             return None
 
     def fetch_drivers_page(self, offset: int = 0, limit: int = 500) -> Optional[Dict]:
-        """Загружает одну страницу водителей"""
+        """Загружает одну страницу водителей с сортировкой от новых к старым"""
         data = {
             "query": {
                 "park": {
@@ -56,6 +56,12 @@ class YandexTaxiClient:
             },
             "limit": min(limit, 1000),
             "offset": offset,
+            "sort_order": [
+                {
+                    "direction": "desc",
+                    "field": "driver_profile.created_date"
+                }
+            ],
             "fields": {
                 "driver_profile": ["id", "first_name", "last_name", "created_date", "work_status"],
                 "account": ["last_transaction_date", "balance", "currency"],
@@ -78,15 +84,19 @@ class YandexTaxiClient:
             return None
     
     def fetch_all_drivers(self) -> List[Dict]:
-        """Загружает всех водителей с пагинацией"""
+        """
+        Загружает первых 10000 активных водителей из API с сортировкой от новых к старым
+        (ограничение API: offset не может превышать 10000)
+        """
         all_drivers = []
         offset = 0
         limit = 500
+        max_offset = 10000
         page = 1
         
-        logger.info(f"Начинаем загрузку водителей из API Яндекс.Такси...")
+        logger.info(f"Начинаем загрузку водителей из API Яндекс.Такси (сортировка: новые → старые)...")
         
-        while True:
+        while offset < max_offset:
             logger.debug(f"Загрузка страницы {page} (offset: {offset})")
             result = self.fetch_drivers_page(offset=offset, limit=limit)
             
@@ -104,17 +114,16 @@ class YandexTaxiClient:
             all_drivers.extend(drivers)
             logger.info(f"✅ Страница {page}: загружено {len(drivers)} водителей (всего в API: {total}, накопилось: {len(all_drivers)})")
             
-            if len(drivers) < limit or len(all_drivers) >= total:
-                logger.info(f"Достигнут конец списка: загружено {len(drivers)} < лимита {limit} или накопилось {len(all_drivers)} >= {total}")
+            if len(drivers) < limit:
+                logger.info(f"Достигнут конец списка: {len(drivers)} < {limit}")
                 break
-                
+            
             offset += limit
             page += 1
             time.sleep(0.5)
         
-        logger.info(f"🏁 ИТОГО загружено водителей из API: {len(all_drivers)}")
+        logger.info(f"🏁 ИТОГО загружено водителей из API (максимум {max_offset}): {len(all_drivers)}")
         
-        # Дополнительная проверка: если загружено 0, возможно проблема с API ключом
         if len(all_drivers) == 0:
             logger.error("❌ API не вернул ни одного водителя! Проверьте API ключи и Park ID")
         
