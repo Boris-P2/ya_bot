@@ -47,7 +47,7 @@ class DataCollector:
             
             driver_data = {
                 'driver_id': driver_id,
-                'first_name': driver_profile.get('first_name', ''),
+                'first_name': '',
                 'last_name': driver_profile.get('last_name', ''),
                 'created_date': driver_profile.get('created_date', ''),
                 'work_status': work_status,
