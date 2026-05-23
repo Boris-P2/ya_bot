@@ -110,7 +110,7 @@ async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Заголовки (добавлена колонка "Телефон")
         writer.writerow([
-            'ID', 'Имя', 'Фамилия', 'Статус', 'Заказы', 
+            'ID', 'Фамилия', 'Статус', 'Заказы', 
             'Баланс', 'Валюта', 'Текущий статус', 
             'Дата регистрации', 'Последняя транзакция', 
             'Последнее обновление', 'Дата добавления',
@@ -121,7 +121,6 @@ async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for driver in drivers:
             writer.writerow([
                 driver.driver_id,
-                driver.first_name,
                 driver.last_name,
                 driver.work_status,
                 driver.orders_count,
@@ -205,7 +204,7 @@ async def get_top_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         response = "🏆 *Топ-10 водителей по заказам:*\n\n"
         for i, driver in enumerate(drivers, 1):
-            response += f"{i}. {driver.first_name} {driver.last_name}\n"
+            response += f"{i}. {driver.last_name}\n"
             response += f"   📦 Заказов: {driver.orders_count}\n"
             if driver.work_status == 'working':
                 response += f"   🟢 Статус: Работает\n"
@@ -220,8 +219,8 @@ async def search_driver(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /search <имя или ID>"""
     if not context.args:
         await update.message.reply_text(
-            "❓ Укажите имя или ID водителя\n"
-            "Пример: /search Иван"
+            "❓ Укажите ID водителя\n"
+            "Пример: /search 123"
         )
         return
     
@@ -238,7 +237,7 @@ async def search_driver(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         response = f"🔍 *Результаты поиска:*\n\n"
         for driver in drivers[:10]:
-            response += f"👤 {driver.first_name} {driver.last_name}\n"
+            response += f"👤  {driver.last_name}\n"
             response += f"   🆔 ID: `{driver.driver_id[:12]}...`\n"
             response += f"   📦 Заказов: {driver.orders_count}\n"
             status_emoji = "🟢" if driver.work_status == "working" else "🟡" if driver.work_status == "not_working" else "🔴"
@@ -267,7 +266,7 @@ async def get_new_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         response = "✨ *Новые водители (последние 30 дней):*\n\n"
         for driver in drivers:
-            response += f"👤 {driver.first_name} {driver.last_name}\n"
+            response += f"👤  {driver.last_name}\n"
             response += f"   📅 Добавлен: {driver.created_at.strftime('%Y-%m-%d')}\n"
             response += f"   📦 Заказов: {driver.orders_count}\n\n"
         
@@ -299,7 +298,7 @@ async def get_drivers_by_status(update: Update, context: ContextTypes.DEFAULT_TY
         response = f"{status_emoji} *Водители со статусом '{status}':*\n\n"
         
         for driver in drivers[:20]:
-            response += f"👤 {driver.first_name} {driver.last_name}\n"
+            response += f"👤  {driver.last_name}\n"
             response += f"   📦 Заказов: {driver.orders_count}\n"
             if driver.last_updated:
                 days_ago = (datetime.utcnow() - driver.last_updated).days
@@ -336,7 +335,7 @@ async def get_driver_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         response = (
             f"👤 *Информация о водителе:*\n\n"
-            f"*Имя:* {driver.first_name} {driver.last_name}\n"
+            f"*Имя:*  {driver.last_name}\n"
             f"*ID:* `{driver.driver_id}`\n"
             f"*Статус:* {status_emoji} {driver.work_status}\n"
             f"*Заказов:* 📦 {driver.orders_count}\n"
