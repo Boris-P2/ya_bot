@@ -63,7 +63,7 @@ class YandexTaxiClient:
                 }
             ],
             "fields": {
-                "driver_profile": ["id", "first_name", "last_name", "created_date", "work_status"],
+                "driver_profile": ["id", "last_name", "created_date", "work_status"],
                 "account": ["last_transaction_date", "balance", "currency"],
                 "current_status": ["status"]
             }
