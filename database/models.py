@@ -1,8 +1,9 @@
-from sqlalchemy import Column, Integer, String, DateTime, Float, JSON, Text, BigInteger
+from sqlalchemy import Column, Integer, String, DateTime, Float, JSON, Text, BigInteger, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
 
 Base = declarative_base()
+
 
 class Driver(Base):
     """Модель водителя"""
@@ -10,7 +11,7 @@ class Driver(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     driver_id = Column(String(100), unique=True, index=True, nullable=False)
-    first_name = Column(String(100))
+    first_name = Column(String(100), default='')  # обезличено
     last_name = Column(String(100))
     created_date = Column(String(50))
     work_status = Column(String(50), index=True)
@@ -23,10 +24,12 @@ class Driver(Base):
     last_status_updated = Column(DateTime, default=datetime.utcnow)
     phone = Column(String(20), nullable=True)
     phone_updated_at = Column(DateTime, nullable=True)
+    telegram_id = Column(Integer, nullable=True, unique=True)  # для привязки Telegram
     
     # Метаданные
     priority_score = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
+
 
 class CollectionLog(Base):
     """Логирование сборов"""
@@ -43,6 +46,7 @@ class CollectionLog(Base):
     errors = Column(JSON, default=list)
     error_message = Column(Text)
 
+
 class UpdateQueue(Base):
     """Очередь для приоритетного обновления (FIFO)"""
     __tablename__ = 'update_queue'
@@ -52,3 +56,46 @@ class UpdateQueue(Base):
     priority = Column(Integer, default=0)  # 0 - обычный, 1 - высокий приоритет (новые)
     last_updated = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class UserAccess(Base):
+    """Таблица для управления доступом пользователей Telegram"""
+    __tablename__ = 'user_access'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    telegram_id = Column(Integer, unique=True, index=True)
+    username = Column(String(100))
+    is_admin = Column(Integer, default=0)  # 0 - обычный, 1 - админ
+    allowed_data_types = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_active = Column(DateTime, default=datetime.utcnow)
+
+
+class Referral(Base):
+    """Модель реферальных связей"""
+    __tablename__ = 'referrals'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    referrer_id = Column(String(100), ForeignKey('drivers.driver_id'), nullable=False)  # кто пригласил
+    referred_id = Column(String(100), ForeignKey('drivers.driver_id'), nullable=False)  # кого пригласили
+    status = Column(String(20), default='pending')  # pending, completed, rewarded
+    referrer_confirmed = Column(Integer, default=0)  # 0 - нет, 1 - да
+    referred_confirmed = Column(Integer, default=0)  # 0 - нет, 1 - да
+    invited_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)  # когда выполнено 100 заказов
+    rewarded_at = Column(DateTime, nullable=True)   # когда выдана награда
+    
+    # Уникальность: пара (referrer_id, referred_id) не может повторяться
+    __table_args__ = (UniqueConstraint('referrer_id', 'referred_id', name='unique_referral'),)
+
+
+class ReferralReward(Base):
+    """История наград"""
+    __tablename__ = 'referral_rewards'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    referral_id = Column(Integer, ForeignKey('referrals.id'))
+    driver_id = Column(String(100), ForeignKey('drivers.driver_id'))
+    amount = Column(Integer, default=100)
+    rewarded_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String(20), default='pending')  # pending, paid
