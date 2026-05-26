@@ -25,6 +25,11 @@ from bot.handlers import (
     queue_stats,
     update_phones,
     phone_status,
+    auth,                # ← ДОБАВИТЬ
+    whoami,              # ← ДОБАВИТЬ
+    invite_driver,       # ← ДОБАВИТЬ
+    my_referrals,        # ← ДОБАВИТЬ
+    referral_stats,      # ← ДОБАВИТЬ
 )
 
 logging.basicConfig(
@@ -60,6 +65,13 @@ def run_bot():
     application.add_handler(CommandHandler("queue", queue_stats))
     application.add_handler(CommandHandler("update_phones", update_phones))  # ← ДОБАВИТЬ ЭТУ СТРОКУ
     application.add_handler(CommandHandler("phonestatus", phone_status))
+
+    # РЕФЕРАЛЬНЫЕ КОМАНДЫ — ДОБАВИТЬ ЭТИ СТРОКИ
+    application.add_handler(CommandHandler("auth", auth))
+    application.add_handler(CommandHandler("whoami", whoami))
+    application.add_handler(CommandHandler("invite", invite_driver))
+    application.add_handler(CommandHandler("my_referrals", my_referrals))
+    application.add_handler(CommandHandler("referral_stats", referral_stats))
     
     # Обработчик кнопок
     application.add_handler(CallbackQueryHandler(button_callback))
