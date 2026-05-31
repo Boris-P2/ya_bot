@@ -3,12 +3,43 @@ from sqlalchemy import or_, func, and_, text
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import logging
+import re
 from database import models
 
 logger = logging.getLogger(__name__)
 
 
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+
+def normalize_phone(phone: str) -> str:
+    """Нормализует номер телефона: удаляет пробелы, скобки, дефисы"""
+    if not phone:
+        return ''
+    return re.sub(r'[^\d+]', '', phone)
+
+
 # ========== ВОДИТЕЛИ ==========
+
+def get_drivers_for_update(db: Session, max_count: int = 100) -> List[models.Driver]:
+    """Получить водителей, которым нужно обновить заказы (старая логика)"""
+    now = datetime.utcnow()
+    
+    cutoff_date = now - timedelta(days=30)
+    stale_date = now - timedelta(days=3)
+    
+    drivers = db.query(models.Driver).filter(
+        models.Driver.work_status != 'fired',
+        or_(
+            models.Driver.created_at >= cutoff_date,
+            or_(
+                models.Driver.last_updated.is_(None),
+                models.Driver.last_updated <= stale_date
+            )
+        )
+    ).limit(max_count).all()
+    
+    return drivers
+
 
 def save_driver(db: Session, driver_data: Dict[str, Any]) -> models.Driver:
     """Сохранить или обновить водителя"""
@@ -17,13 +48,11 @@ def save_driver(db: Session, driver_data: Dict[str, Any]) -> models.Driver:
     ).first()
     
     if driver:
-        # Обновляем существующего
         for key, value in driver_data.items():
             if hasattr(driver, key):
                 setattr(driver, key, value)
         driver.last_updated = datetime.utcnow()
     else:
-        # Создаем нового
         driver = models.Driver(**driver_data)
         db.add(driver)
     
@@ -47,9 +76,12 @@ def get_driver_by_telegram_id(db: Session, telegram_id: int) -> Optional[models.
 
 
 def get_driver_by_phone(db: Session, phone: str) -> Optional[models.Driver]:
-    """Получить водителя по номеру телефона"""
+    """Получить водителя по номеру телефона (с нормализацией)"""
+    normalized = normalize_phone(phone)
+    if not normalized:
+        return None
     return db.query(models.Driver).filter(
-        models.Driver.phone == phone
+        models.Driver.phone == normalized
     ).first()
 
 
@@ -65,27 +97,6 @@ def get_drivers_by_status(db: Session, status: str) -> List[models.Driver]:
     return db.query(models.Driver).filter(
         models.Driver.work_status == status
     ).all()
-
-
-def get_drivers_for_update(db: Session, max_count: int = 100) -> List[models.Driver]:
-    """Получить водителей, которым нужно обновить заказы (старая логика)"""
-    now = datetime.utcnow()
-    
-    cutoff_date = now - timedelta(days=30)
-    stale_date = now - timedelta(days=3)
-    
-    drivers = db.query(models.Driver).filter(
-        models.Driver.work_status != 'fired',
-        or_(
-            models.Driver.created_at >= cutoff_date,
-            or_(
-                models.Driver.last_updated.is_(None),
-                models.Driver.last_updated <= stale_date
-            )
-        )
-    ).limit(max_count).all()
-    
-    return drivers
 
 
 def update_driver_orders(
@@ -122,13 +133,11 @@ def get_driver_statistics(db: Session) -> Dict[str, Any]:
         models.Driver.work_status == 'fired'
     ).count()
     
-    # Новые водители за последние 30 дней
     cutoff = datetime.utcnow() - timedelta(days=30)
     new_drivers = db.query(models.Driver).filter(
         models.Driver.created_at >= cutoff
     ).count()
     
-    # Среднее количество заказов
     avg_orders = db.query(func.avg(models.Driver.orders_count)).scalar() or 0
     
     return {
@@ -156,7 +165,6 @@ def search_drivers(db: Session, query: str) -> List[models.Driver]:
 
 def get_next_drivers_for_update(db: Session, batch_size: int = 100) -> List[models.UpdateQueue]:
     """Получает следующих водителей из очереди (FIFO)"""
-    # Сначала водители с высоким приоритетом
     priority_drivers = db.query(models.UpdateQueue).filter(
         models.UpdateQueue.priority == 1
     ).order_by(
@@ -166,7 +174,6 @@ def get_next_drivers_for_update(db: Session, batch_size: int = 100) -> List[mode
     if len(priority_drivers) >= batch_size:
         return priority_drivers
     
-    # Если высокоприоритетных меньше, добираем обычными
     remaining = batch_size - len(priority_drivers)
     regular_drivers = db.query(models.UpdateQueue).filter(
         models.UpdateQueue.priority == 0
@@ -185,24 +192,23 @@ def update_queue_timestamp(db: Session, driver_id: str):
     db.commit()
 
 
-def init_update_queue(db: Session):
+def init_update_queue(db: Session) -> int:
     """Инициализирует очередь обновления из существующих водителей"""
-    from datetime import datetime
-    
-    # Проверяем, есть ли записи
     count = db.query(models.UpdateQueue).count()
     if count > 0:
         logger.info(f"Queue already has {count} entries")
         return count
     
-    # Получаем всех активных водителей
     drivers = db.query(models.Driver).filter(
         models.Driver.work_status != 'fired'
     ).all()
     
     added = 0
     for driver in drivers:
-        priority = 1 if driver.phone else 0  # пример приоритета
+        # Проверяем наличие реального телефона (не пустой строки)
+        has_phone = driver.phone and driver.phone != ''
+        priority = 1 if has_phone else 0
+        
         queue_entry = models.UpdateQueue(
             driver_id=driver.driver_id,
             priority=priority,
@@ -332,9 +338,15 @@ def get_user(db: Session, telegram_id: int) -> Optional[models.UserAccess]:
 
 # ========== РЕФЕРАЛЬНЫЕ СВЯЗИ ==========
 
+def get_referral_count(db: Session, driver_id: str) -> int:
+    """Получает количество приглашённых водителей"""
+    return db.query(models.Referral).filter(
+        models.Referral.referrer_id == driver_id
+    ).count()
+
+
 def create_referral(db: Session, referrer_id: str, referred_id: str) -> Optional[models.Referral]:
     """Создаёт новую реферальную связь"""
-    # Проверяем, не существует ли уже такой связи
     existing = db.query(models.Referral).filter(
         and_(
             models.Referral.referrer_id == referrer_id,
@@ -346,7 +358,6 @@ def create_referral(db: Session, referrer_id: str, referred_id: str) -> Optional
         logger.warning(f"Referral already exists: {referrer_id} -> {referred_id}")
         return None
     
-    # Нельзя пригласить самого себя
     if referrer_id == referred_id:
         logger.warning("Cannot refer yourself")
         return None
@@ -379,12 +390,11 @@ def get_referrer_by_driver(db: Session, driver_id: str) -> Optional[models.Refer
 
 
 def check_and_complete_referrals(db: Session, driver_id: str, orders_count: int, threshold: int = 100):
-    """Проверяет, не выполнил ли водитель условие для награды"""
+    """Проверяет, не выполнил ли водитель условие для награды и автоматически создаёт награду"""
     referrals = get_referrals_by_driver(db, driver_id, status='pending')
     
     completed = []
     for referral in referrals:
-        # Получаем данные приглашённого водителя
         referred = db.query(models.Driver).filter(
             models.Driver.driver_id == referral.referred_id
         ).first()
@@ -394,6 +404,9 @@ def check_and_complete_referrals(db: Session, driver_id: str, orders_count: int,
             referral.completed_at = datetime.utcnow()
             db.commit()
             completed.append(referral)
+            
+            # Автоматически создаём награду для пригласившего
+            complete_referral_and_reward(db, referral.id, driver_id)
     
     return completed
 
@@ -430,7 +443,7 @@ def get_reward_stats(db: Session, driver_id: str) -> Dict[str, Any]:
     }
 
 
-def complete_referral_and_reward(db: Session, referral_id: int, driver_id: str, amount: int = 100):
+def complete_referral_and_reward(db: Session, referral_id: int, driver_id: str, amount: int = 100) -> Optional[models.ReferralReward]:
     """Завершает реферальную связь и создаёт награду"""
     referral = db.query(models.Referral).filter(
         models.Referral.id == referral_id
@@ -451,3 +464,99 @@ def complete_referral_and_reward(db: Session, referral_id: int, driver_id: str, 
         return reward
     
     return None
+
+
+# ========== ОЖИДАЮЩИЕ ПРИГЛАШЕНИЯ (PENDING INVITES) ==========
+
+def get_pending_invite_by_phone(db: Session, referrer_id: str, phone: str) -> Optional[models.PendingInvite]:
+    """Получает ожидающее приглашение по номеру телефона"""
+    normalized_phone = normalize_phone(phone)
+    return db.query(models.PendingInvite).filter(
+        models.PendingInvite.referrer_id == referrer_id,
+        models.PendingInvite.phone == normalized_phone,
+        models.PendingInvite.status == 'pending'
+    ).first()
+
+
+def count_pending_invites(db: Session, referrer_id: str) -> int:
+    """Считает количество активных ожидающих приглашений"""
+    return db.query(models.PendingInvite).filter(
+        models.PendingInvite.referrer_id == referrer_id,
+        models.PendingInvite.status == 'pending'
+    ).count()
+
+
+def create_pending_invite(db: Session, referrer_id: str, phone: str) -> models.PendingInvite:
+    """Создаёт ожидающее приглашение"""
+    normalized_phone = normalize_phone(phone)
+    pending_invite = models.PendingInvite(
+        referrer_id=referrer_id,
+        phone=normalized_phone,
+        status='pending',
+        invited_at=datetime.utcnow()
+    )
+    db.add(pending_invite)
+    db.commit()
+    db.refresh(pending_invite)
+    return pending_invite
+
+
+def get_pending_invites_by_referrer(db: Session, referrer_id: str) -> List[models.PendingInvite]:
+    """Получает все ожидающие приглашения по referrer_id"""
+    return db.query(models.PendingInvite).filter(
+        models.PendingInvite.referrer_id == referrer_id,
+        models.PendingInvite.status == 'pending'
+    ).order_by(models.PendingInvite.invited_at.asc()).all()
+
+
+def get_all_pending_invites(db: Session) -> List[models.PendingInvite]:
+    """Получает все активные ожидающие приглашения"""
+    return db.query(models.PendingInvite).filter(
+        models.PendingInvite.status == 'pending'
+    ).all()
+
+
+def cancel_pending_invite(db: Session, invite_id: int):
+    """Отменяет ожидающее приглашение"""
+    db.query(models.PendingInvite).filter(
+        models.PendingInvite.id == invite_id
+    ).update({
+        'status': 'cancelled',
+        'cancelled_at': datetime.utcnow()
+    })
+    db.commit()
+
+
+def complete_pending_invite(db: Session, invite_id: int):
+    """Завершает ожидающее приглашение (водитель найден)"""
+    db.query(models.PendingInvite).filter(
+        models.PendingInvite.id == invite_id
+    ).update({'status': 'completed'})
+    db.commit()
+
+
+def process_pending_invites(db: Session):
+    """Обрабатывает все ожидающие приглашения: проверяет, появился ли водитель в базе"""
+    pending_invites = get_all_pending_invites(db)
+    
+    for invite in pending_invites:
+        # Ищем водителя по номеру телефона
+        driver = get_driver_by_phone(db, invite.phone)
+        
+        if driver:
+            # Создаём реферальную связь
+            referral = create_referral(db, invite.referrer_id, driver.driver_id)
+            if referral:
+                complete_pending_invite(db, invite.id)
+                logger.info(f"Pending invite completed: {invite.referrer_id} -> {driver.driver_id}")
+    
+    # Отменяем приглашения старше 7 дней
+    cutoff_date = datetime.utcnow() - timedelta(days=7)
+    old_invites = db.query(models.PendingInvite).filter(
+        models.PendingInvite.status == 'pending',
+        models.PendingInvite.invited_at < cutoff_date
+    ).all()
+    
+    for invite in old_invites:
+        cancel_pending_invite(db, invite.id)
+        logger.info(f"Pending invite cancelled (expired): {invite.referrer_id} -> {invite.phone}")
