@@ -24,12 +24,12 @@ from bot.handlers import (
     export_drivers,
     queue_stats,
     update_phones,
-    phone_status,
-    auth,                # ← ДОБАВИТЬ
-    whoami,              # ← ДОБАВИТЬ
-    invite_driver,       # ← ДОБАВИТЬ
-    my_referrals,        # ← ДОБАВИТЬ
-    referral_stats,      # ← ДОБАВИТЬ
+    phone_status,          # ← Убедитесь, что функция существует в handlers.py
+    auth,
+    whoami,
+    invite_driver,
+    my_referrals,
+    referral_stats,
 )
 
 logging.basicConfig(
@@ -63,10 +63,10 @@ def run_bot():
     application.add_handler(CommandHandler("recent", get_recent_updates))
     application.add_handler(CommandHandler("export", export_drivers))
     application.add_handler(CommandHandler("queue", queue_stats))
-    application.add_handler(CommandHandler("update_phones", update_phones))  # ← ДОБАВИТЬ ЭТУ СТРОКУ
+    application.add_handler(CommandHandler("update_phones", update_phones))
     application.add_handler(CommandHandler("phonestatus", phone_status))
-
-    # РЕФЕРАЛЬНЫЕ КОМАНДЫ — ДОБАВИТЬ ЭТИ СТРОКИ
+    
+    # РЕФЕРАЛЬНЫЕ КОМАНДЫ
     application.add_handler(CommandHandler("auth", auth))
     application.add_handler(CommandHandler("whoami", whoami))
     application.add_handler(CommandHandler("invite", invite_driver))
