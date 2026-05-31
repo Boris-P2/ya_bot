@@ -143,7 +143,7 @@ async def auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"✅ Аккаунт привязан!\n\n"
             f"👤 Водитель: {driver.last_name or 'Без имени'}\n"
-            f"📞 Телефон: {driver.phone}\n"
+            f"📞 Телефон: {driver.phone or 'Не указан'}\n"
             f"📦 Заказов: {driver.orders_count}\n\n"
             f"📋 *Доступные команды:*\n"
             f"/invite — пригласить водителя\n"
@@ -287,13 +287,9 @@ async def invite_driver(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # ========== ПРОВЕРКА 3: ЗАПРЕТ ВЗАИМНЫХ ПРИГЛАШЕНИЙ ==========
         # Проверяем, не приглашал ли уже этот водитель текущего
-        reverse_referral = db.query(models.Referral).filter(
-            models.Referral.referrer_id == referred.driver_id,
-            models.Referral.referred_id == driver.driver_id,
-            models.Referral.status.in_(['pending', 'completed', 'rewarded'])
-        ).first()
+        reverse_referral = crud.get_referrer_by_driver(db, driver.driver_id)
         
-        if reverse_referral:
+        if reverse_referral and reverse_referral.referrer_id == referred.driver_id:
             await update.message.reply_text(
                 f"❌ Невозможно пригласить этого водителя.\n\n"
                 f"Водитель {referred.last_name or 'Без имени'} уже пригласил вас.\n"
@@ -302,18 +298,11 @@ async def invite_driver(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         # ========== ПРОВЕРКА 4: СУЩЕСТВУЮЩЕЕ ПРИГЛАШЕНИЕ ==========
-        existing = db.query(models.Referral).filter(
-            models.Referral.referrer_id == driver.driver_id,
-            models.Referral.referred_id == referred.driver_id
-        ).first()
+        existing = crud.get_referrals_by_driver(db, driver.driver_id)
+        existing_for_referred = any(r.referred_id == referred.driver_id for r in existing)
         
-        if existing:
-            status_text = {
-                'pending': 'ожидает выполнения',
-                'completed': 'уже выполнено',
-                'rewarded': 'уже награждено'
-            }.get(existing.status, existing.status)
-            await update.message.reply_text(f"❌ Вы уже приглашали этого водителя. Статус: {status_text}")
+        if existing_for_referred:
+            await update.message.reply_text(f"❌ Вы уже приглашали этого водителя.")
             return
         
         # ========== СОЗДАНИЕ ПРИГЛАШЕНИЯ ==========
@@ -324,7 +313,7 @@ async def invite_driver(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"✅ Приглашение отправлено!\n\n"
                 f"👤 Водитель: {referred.last_name or 'Без имени'}\n"
-                f"📞 Телефон: {referred.phone}\n"
+                f"📞 Телефон: {referred.phone or 'Не указан'}\n"
                 f"📦 Текущее количество заказов: {referred.orders_count}\n\n"
                 f"🎯 Осталось заказов до награды: {remaining_orders}\n"
                 f"💰 Награда: 100 бонусов"
@@ -387,8 +376,9 @@ async def my_referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Ожидающие приглашения
         for invite in pending_invites:
-            days_left = 7 - (datetime.utcnow() - invite.invited_at).days
-            response += f"⏳ {invite.phone[:10]}*** — ожидает регистрации ({days_left} дн.)\n"
+            days_left = max(0, 7 - (datetime.utcnow() - invite.invited_at).days)
+            phone_display = invite.phone[:10] if len(invite.phone) > 10 else invite.phone
+            response += f"⏳ {phone_display}*** — ожидает регистрации ({days_left} дн.)\n"
         
         if len(referrals) > 20:
             response += f"\n*... и еще {len(referrals) - 20} приглашений*"
@@ -416,15 +406,10 @@ async def referral_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         stats = crud.get_reward_stats(db, driver.driver_id)
         
-        completed = db.query(models.Referral).filter(
-            models.Referral.referrer_id == driver.driver_id,
-            models.Referral.status.in_(['completed', 'rewarded'])
-        ).count()
-        
-        pending = db.query(models.Referral).filter(
-            models.Referral.referrer_id == driver.driver_id,
-            models.Referral.status == 'pending'
-        ).count()
+        # Получаем все приглашения через crud
+        all_referrals = crud.get_referrals_by_driver(db, driver.driver_id)
+        completed = sum(1 for r in all_referrals if r.status in ['completed', 'rewarded'])
+        pending = sum(1 for r in all_referrals if r.status == 'pending')
         
         pending_invites = crud.count_pending_invites(db, driver.driver_id)
         
