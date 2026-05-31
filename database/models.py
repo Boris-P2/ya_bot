@@ -99,3 +99,14 @@ class ReferralReward(Base):
     amount = Column(Integer, default=100)
     rewarded_at = Column(DateTime, default=datetime.utcnow)
     status = Column(String(20), default='pending')  # pending, paid
+
+    class PendingInvite(Base):
+    """Ожидающие приглашения (водитель ещё не в базе)"""
+    __tablename__ = 'pending_invites'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    referrer_id = Column(String(100), nullable=False)
+    phone = Column(String(20), nullable=False)
+    invited_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String(20), default='pending')  # pending, cancelled, completed
+    cancelled_at = Column(DateTime, nullable=True)
