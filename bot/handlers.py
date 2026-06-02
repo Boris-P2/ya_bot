@@ -179,7 +179,6 @@ async def auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         db.close()
 
-
 async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /whoami - информация о привязанном аккаунте"""
     user = update.effective_user
@@ -208,7 +207,6 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     finally:
         db.close()
-
 
 async def invite_driver(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /invite <телефон> - пригласить водителя по номеру телефона"""
@@ -323,14 +321,15 @@ async def invite_driver(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # ========== ПРОВЕРКА 4: СУЩЕСТВУЮЩЕЕ ПРИГЛАШЕНИЕ ==========
         existing = crud.get_referrals_by_driver(db, driver.driver_id)
-        existing_for_referred = any(r.referred_id == referred.driver_id for r in existing)
+        existing_for_referred = any(r.referred_phone == target_phone_clean for r in existing)
         
         if existing_for_referred:
-            await update.message.reply_text(f"❌ Вы уже приглашали этого водителя.")
+            await update.message.reply_text(f"❌ Вы уже приглашали этот номер телефона.")
             return
         
         # ========== СОЗДАНИЕ ПРИГЛАШЕНИЯ ==========
-        referral = crud.create_referral(db, driver.driver_id, referred.driver_id)
+        # ВАЖНО: передаём номер телефона, а не driver_id!
+        referral = crud.create_referral(db, driver.driver_id, target_phone_clean)
         
         if referral:
             remaining_orders = max(0, 100 - referred.orders_count)
@@ -340,14 +339,18 @@ async def invite_driver(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📞 Телефон: {referred.phone or 'Не указан'}\n"
                 f"📦 Текущее количество заказов: {referred.orders_count}\n\n"
                 f"🎯 Осталось заказов до награды: {remaining_orders}\n"
-                f"💰 Награда: 100 бонусов"
+                f"💰 Награда: 100 бонусов\n\n"
+                f"_Приглашение привязано к номеру телефона и сохранится даже при смене профиля_",
+                parse_mode='Markdown'
             )
         else:
             await update.message.reply_text("❌ Ошибка при создании приглашения")
             
+    except Exception as e:
+        logger.error(f"Invite error: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
     finally:
         db.close()
-
 
 async def my_referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /my_referrals - список моих приглашений"""
