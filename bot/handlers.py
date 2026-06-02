@@ -75,8 +75,52 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
+async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /help_admin - полная справка для администратора (только для ADMIN_IDS)"""
+    # Проверка по ADMIN_IDS из переменных окружения
+    if update.effective_user.id not in settings.ADMIN_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для этой команды")
+        return
+    
+    help_text = """
+📚 *ПОЛНАЯ СПРАВКА ДЛЯ АДМИНИСТРАТОРА*
 
+📊 *Основные команды:*
+/stats - Общая статистика по водителям
+/top - Топ-10 водителей по заказам
+/search <фамилия или ID> - Поиск водителей
+/new - Новые водители (последние 30 дней)
+/status <working/not_working/fired> - Водители по статусу
+/driver <id> - Информация о конкретном водителе
+/recent - История обновлений сборщика
+/queue - Статистика очереди обновления
 
+🔐 *Реферальная система:*
+/auth <телефон> - Привязать Telegram к водителю
+/invite <телефон> - Пригласить водителя
+/myreferrals - Список моих приглашений
+/referralstats - Статистика наград
+
+📞 *Управление данными:*
+/export - Экспорт всех водителей в CSV
+/update_phones - Обновить номера телефонов
+/phonestatus - Статус телефонов в базе
+
+📋 *Примеры использования:*
+/search Иванов
+/status working
+/driver 123456789
+/auth +79001234567
+/invite +79009876543
+
+🔄 *Автоматические процессы:*
+• Сбор данных о водителях: каждые 6 часов
+• Обновление телефонов: каждые 6 часов
+• Обработка приглашений: каждые 6 часов
+
+📊 *Статистика системы:* /stats, /queue, /phonestatus
+"""
+    await update.message.reply_text(help_text, parse_mode='Markdown')
 
 # ========== РЕФЕРАЛЬНАЯ СИСТЕМА ==========
 
