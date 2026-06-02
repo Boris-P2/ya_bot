@@ -782,78 +782,151 @@ async def queue_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         db.close()
 
-
 # ========== ЭКСПОРТ ==========
-
 async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Экспорт всех водителей в CSV файл"""
+    """Экспорт всех водителей в CSV файл с реферальной статистикой"""
     if update.effective_user.id not in settings.ADMIN_IDS:
         await update.message.reply_text("⛔ У вас нет прав для этой команды")
         return
     
-    await update.message.reply_text("📊 Собираю данные для экспорта...")
+    await update.message.reply_text("📊 Начинаю экспорт данных с реферальной статистикой...\n⏳ Это может занять некоторое время")
     
     db = SessionLocal()
+    
     try:
-        drivers = db.query(models.Driver).order_by(
-            models.Driver.orders_count.desc()
-        ).all()
+        # Получаем общее количество водителей
+        total = db.query(models.Driver).count()
         
-        if not drivers:
+        if total == 0:
             await update.message.reply_text("Нет данных для экспорта")
             return
         
+        # Создаём CSV в памяти
         output = io.StringIO()
         writer = csv.writer(output, delimiter=';')
         
-        # Заголовки с добавлением реферальной информации
+        # Расширенные заголовки с реферальной информацией
         writer.writerow([
             'ID', 'Фамилия', 'Статус', 'Заказы', 
             'Баланс', 'Валюта', 'Текущий статус', 
             'Дата регистрации', 'Последняя транзакция', 
             'Последнее обновление', 'Дата добавления', 'Телефон',
-            'Кого пригласил (ID)', 'Кто пригласил (ID)', 'Статус приглашения'
+            'Количество приглашений', 'Приглашённые (ID)', 'Выполнено 100+ заказов',
+            'Количество наград', 'Сумма наград (бонусы)', 'Кто пригласил (ID)'
         ])
         
-        # Данные
-        for driver in drivers:
-            # Получаем реферальную информацию
-            referrals = crud.get_referrals_by_driver(db, driver.driver_id)
-            referred_ids = ', '.join([r.referred_id[:12] + '...' for r in referrals[:3]])
-            
-            referrer = crud.get_referrer_by_driver(db, driver.driver_id)
-            referrer_id = referrer.referrer_id[:12] + '...' if referrer else ''
-            referral_status = referrer.status if referrer else ''
-            
-            writer.writerow([
-                driver.driver_id,
-                driver.last_name or '',
-                driver.work_status,
-                driver.orders_count,
-                driver.balance,
-                driver.currency,
-                driver.current_status,
-                driver.created_date[:10] if driver.created_date else '',
-                driver.last_transaction_date[:10] if driver.last_transaction_date else '',
-                driver.last_updated.strftime('%Y-%m-%d %H:%M') if driver.last_updated else '',
-                driver.created_at.strftime('%Y-%m-%d %H:%M') if driver.created_at else '',
-                driver.phone if driver.phone else '',
-                referred_ids,
-                referrer_id,
-                referral_status
-            ])
+        # Экспортируем пачками по 500 записей
+        batch_size = 500
+        offset = 0
+        last_progress = 0
         
+        while offset < total:
+            # Получаем пачку водителей
+            drivers = db.query(models.Driver).order_by(
+                models.Driver.driver_id
+            ).offset(offset).limit(batch_size).all()
+            
+            # Собираем все ID водителей для массовой загрузки реферальных данных
+            driver_ids = [d.driver_id for d in drivers]
+            
+            # Массово получаем реферальные данные для всех водителей в пачке
+            # Кого пригласил этот водитель
+            referrals = db.query(models.Referral).filter(
+                models.Referral.referrer_id.in_(driver_ids)
+            ).all()
+            
+            # Статистика по приглашениям (количество, выполненные, ID приглашённых)
+            referral_stats = {}
+            for r in referrals:
+                if r.referrer_id not in referral_stats:
+                    referral_stats[r.referrer_id] = {
+                        'count': 0,
+                        'completed': 0,
+                        'referred_ids': []
+                    }
+                referral_stats[r.referrer_id]['count'] += 1
+                referral_stats[r.referrer_id]['referred_ids'].append(r.referred_id)
+                if r.status in ['completed', 'rewarded']:
+                    referral_stats[r.referrer_id]['completed'] += 1
+            
+            # Кто пригласил этого водителя
+            referrers = db.query(models.Referral).filter(
+                models.Referral.referred_id.in_(driver_ids)
+            ).all()
+            referrer_map = {r.referred_id: r.referrer_id for r in referrers}
+            
+            # Награды для водителей
+            rewards = db.query(models.ReferralReward).filter(
+                models.ReferralReward.driver_id.in_(driver_ids)
+            ).all()
+            reward_stats = {}
+            for rw in rewards:
+                if rw.driver_id not in reward_stats:
+                    reward_stats[rw.driver_id] = {
+                        'count': 0,
+                        'amount': 0
+                    }
+                reward_stats[rw.driver_id]['count'] += 1
+                if rw.status == 'paid':
+                    reward_stats[rw.driver_id]['amount'] += rw.amount
+            
+            for driver in drivers:
+                # Реферальная статистика
+                ref = referral_stats.get(driver.driver_id, {'count': 0, 'completed': 0, 'referred_ids': []})
+                referred_ids_str = ', '.join(ref['referred_ids'][:5])  # Ограничиваем 5 ID
+                if len(ref['referred_ids']) > 5:
+                    referred_ids_str += f"... +{len(ref['referred_ids']) - 5}"
+                
+                # Награды
+                rew = reward_stats.get(driver.driver_id, {'count': 0, 'amount': 0})
+                
+                writer.writerow([
+                    driver.driver_id,
+                    driver.last_name or '',
+                    driver.work_status,
+                    driver.orders_count,
+                    driver.balance,
+                    driver.currency,
+                    driver.current_status,
+                    driver.created_date[:10] if driver.created_date else '',
+                    driver.last_transaction_date[:10] if driver.last_transaction_date else '',
+                    driver.last_updated.strftime('%Y-%m-%d %H:%M') if driver.last_updated else '',
+                    driver.created_at.strftime('%Y-%m-%d %H:%M') if driver.created_at else '',
+                    driver.phone if driver.phone else '',
+                    ref['count'],
+                    referred_ids_str,
+                    ref['completed'],
+                    rew['count'],
+                    rew['amount'],
+                    referrer_map.get(driver.driver_id, '')
+                ])
+            
+            offset += batch_size
+            
+            # Отправляем статус каждые 2000 записей
+            progress = int(offset / total * 100)
+            if progress >= last_progress + 10:
+                last_progress = progress
+                await update.message.reply_text(f"📊 Экспортировано {offset}/{total} записей ({progress}%)...")
+        
+        # Конвертируем в bytes для отправки
         output_bytes = io.BytesIO()
         output_bytes.write(output.getvalue().encode('utf-8-sig'))
         output_bytes.seek(0)
         
+        # Отправляем файл
         await update.message.reply_document(
             document=output_bytes,
             filename=f'drivers_export_{datetime.now().strftime("%Y%m%d_%H%M")}.csv',
-            caption=f'📊 Экспорт данных о водителях\n'
-                    f'Всего записей: {len(drivers)}\n'
-                    f'📞 С телефонами: {len([d for d in drivers if d.phone])}\n'
-                    f'Дата: {datetime.now().strftime("%Y-%m-%d %H:%M")}'
+            caption=f'📊 Экспорт данных о водителях с реферальной статистикой\n'
+                    f'Всего записей: {total}\n'
+                    f'Дата: {datetime.now().strftime("%Y-%m-%d %H:%M")}\n\n'
+                    f'📋 *Описание колонок:*\n'
+                    f'• "Количество приглашений" — сколько водителей пригласил\n'
+                    f'• "Выполнено 100+ заказов" — сколько приглашённых сделали 100+ заказов\n'
+                    f'• "Количество наград" — сколько наград получено\n'
+                    f'• "Сумма наград" — общее количество бонусов',
+            parse_mode='Markdown'
         )
         
     except Exception as e:
