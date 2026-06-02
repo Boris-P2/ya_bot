@@ -30,6 +30,7 @@ from bot.handlers import (
     invite_driver,
     my_referrals,
     referral_stats,
+    help_admin,  # ← ДОБАВИТЬ
 )
 
 logging.basicConfig(
@@ -54,6 +55,7 @@ def run_bot():
     # Регистрируем команды
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("help_admin", help_admin))  # ← ДОБАВИТЬ
     application.add_handler(CommandHandler("stats", get_stats))
     application.add_handler(CommandHandler("top", get_top_drivers))
     application.add_handler(CommandHandler("search", search_driver))
@@ -72,6 +74,10 @@ def run_bot():
     application.add_handler(CommandHandler("invite", invite_driver))
     application.add_handler(CommandHandler("my_referrals", my_referrals))
     application.add_handler(CommandHandler("referral_stats", referral_stats))
+
+    # Алиасы (без подчёркиваний)
+    application.add_handler(CommandHandler("myreferrals", my_referrals))
+    application.add_handler(CommandHandler("referralstats", referral_stats))
     
     # Обработчик кнопок
     application.add_handler(CallbackQueryHandler(button_callback))
