@@ -100,7 +100,7 @@ class ReferralReward(Base):
     rewarded_at = Column(DateTime, default=datetime.utcnow)
     status = Column(String(20), default='pending')  # pending, paid
 
-    class PendingInvite(Base):
+class PendingInvite(Base):
     """Ожидающие приглашения (водитель ещё не в базе)"""
     __tablename__ = 'pending_invites'
     
