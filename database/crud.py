@@ -345,31 +345,56 @@ def get_referral_count(db: Session, driver_id: str) -> int:
     ).count()
 
 
-def create_referral(db: Session, referrer_id: str, referred_id: str) -> Optional[models.Referral]:
-    """Создаёт новую реферальную связь"""
+def create_referral(db: Session, referrer_id: str, referred_phone: str) -> Optional[models.Referral]:
+    """Создаёт новую реферальную связь по номеру телефона"""
+    
+    # Проверяем, не приглашал ли уже этот водитель данный номер
     existing = db.query(models.Referral).filter(
-        and_(
-            models.Referral.referrer_id == referrer_id,
-            models.Referral.referred_id == referred_id
-        )
+        models.Referral.referrer_id == referrer_id,
+        models.Referral.referred_phone == referred_phone
     ).first()
     
     if existing:
-        logger.warning(f"Referral already exists: {referrer_id} -> {referred_id}")
+        logger.warning(f"Referral already exists: {referrer_id} -> {referred_phone}")
         return None
     
-    if referrer_id == referred_id:
+    # Нельзя пригласить самого себя
+    referrer = db.query(models.Driver).filter(models.Driver.driver_id == referrer_id).first()
+    if referrer and referrer.phone == referred_phone:
         logger.warning("Cannot refer yourself")
         return None
     
+    # Ищем АКТИВНОГО водителя с этим номером (приоритет: working > not_working > fired)
+    referred_driver = db.query(models.Driver).filter(
+        models.Driver.phone == referred_phone
+    ).order_by(
+        # Приоритет статусов: working (1), not_working (2), fired (3), NULL (4)
+        db.case(
+            (models.Driver.work_status == 'working', 1),
+            (models.Driver.work_status == 'not_working', 2),
+            (models.Driver.work_status == 'fired', 3),
+            else_=4
+        ),
+        # Если статусы одинаковые — берём последнего обновлённого
+        models.Driver.last_updated.desc()
+    ).first()
+    
     referral = models.Referral(
         referrer_id=referrer_id,
-        referred_id=referred_id,
+        referrer_phone=referrer.phone if referrer else None,
+        referred_phone=referred_phone,
+        referred_id=referred_driver.driver_id if referred_driver else None,
         status='pending'
     )
     db.add(referral)
     db.commit()
     db.refresh(referral)
+    
+    if referred_driver:
+        logger.info(f"Referral created: {referrer_id} -> {referred_driver.driver_id} (active driver found)")
+    else:
+        logger.info(f"Referral created (pending): {referrer_id} -> phone {referred_phone} (no active driver)")
+    
     return referral
 
 
