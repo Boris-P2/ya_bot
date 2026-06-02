@@ -25,7 +25,7 @@ class Driver(Base):
     phone = Column(String(20), nullable=True)
     phone_updated_at = Column(DateTime, nullable=True)
     telegram_id = Column(Integer, nullable=True, unique=True)  # для привязки Telegram
-    
+
     # Метаданные
     priority_score = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
