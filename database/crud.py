@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func, and_, text
+from sqlalchemy import or_, func, and_, text, case
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import logging
@@ -335,7 +335,6 @@ def get_user(db: Session, telegram_id: int) -> Optional[models.UserAccess]:
         models.UserAccess.telegram_id == telegram_id
     ).first()
 
-
 # ========== РЕФЕРАЛЬНЫЕ СВЯЗИ ==========
 
 def get_referral_count(db: Session, driver_id: str) -> int:
@@ -344,11 +343,14 @@ def get_referral_count(db: Session, driver_id: str) -> int:
         models.Referral.referrer_id == driver_id
     ).count()
 
-
 def create_referral(db: Session, referrer_id: str, referred_phone: str) -> Optional[models.Referral]:
     """Создаёт новую реферальную связь по номеру телефона"""
     
-    # Проверяем, не приглашал ли уже этот водитель данный номер
+    # Нормализуем номер
+    from database.crud import normalize_phone
+    referred_phone = normalize_phone(referred_phone)
+    
+    # Проверяем существующее приглашение
     existing = db.query(models.Referral).filter(
         models.Referral.referrer_id == referrer_id,
         models.Referral.referred_phone == referred_phone
@@ -358,27 +360,31 @@ def create_referral(db: Session, referrer_id: str, referred_phone: str) -> Optio
         logger.warning(f"Referral already exists: {referrer_id} -> {referred_phone}")
         return None
     
-    # Нельзя пригласить самого себя
+    # Получаем данные пригласившего
     referrer = db.query(models.Driver).filter(models.Driver.driver_id == referrer_id).first()
+    
+    # Нельзя пригласить себя
     if referrer and referrer.phone == referred_phone:
         logger.warning("Cannot refer yourself")
         return None
     
-    # Ищем АКТИВНОГО водителя с этим номером (приоритет: working > not_working > fired)
+    # Ищем активного водителя с этим номером
+    # Используем case из sqlalchemy, а не db.case!
+    status_priority = case(
+        (models.Driver.work_status == 'working', 1),
+        (models.Driver.work_status == 'not_working', 2),
+        (models.Driver.work_status == 'fired', 3),
+        else_=4
+    )
+    
     referred_driver = db.query(models.Driver).filter(
         models.Driver.phone == referred_phone
     ).order_by(
-        # Приоритет статусов: working (1), not_working (2), fired (3), NULL (4)
-        db.case(
-            (models.Driver.work_status == 'working', 1),
-            (models.Driver.work_status == 'not_working', 2),
-            (models.Driver.work_status == 'fired', 3),
-            else_=4
-        ),
-        # Если статусы одинаковые — берём последнего обновлённого
+        status_priority,
         models.Driver.last_updated.desc()
     ).first()
     
+    # Создаём приглашение
     referral = models.Referral(
         referrer_id=referrer_id,
         referrer_phone=referrer.phone if referrer else None,
@@ -391,12 +397,11 @@ def create_referral(db: Session, referrer_id: str, referred_phone: str) -> Optio
     db.refresh(referral)
     
     if referred_driver:
-        logger.info(f"Referral created: {referrer_id} -> {referred_driver.driver_id} (active driver found)")
+        logger.info(f"Referral created: {referrer_id} -> {referred_driver.driver_id} (phone: {referred_phone})")
     else:
-        logger.info(f"Referral created (pending): {referrer_id} -> phone {referred_phone} (no active driver)")
+        logger.info(f"Referral created (pending): {referrer_id} -> phone {referred_phone}")
     
     return referral
-
 
 def get_referrals_by_driver(db: Session, driver_id: str, status: str = None) -> List[models.Referral]:
     """Получает все приглашения водителя (кого он пригласил)"""
