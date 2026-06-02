@@ -44,14 +44,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👋 Привет, {user.first_name}!\n\n"
         f"Я бот для доступа к данным водителей Яндекс.Такси.\n\n"
         f"📋 *Доступные команды:*\n"
-        f"/stats - статистика по водителям\n"
-        f"/top - топ водителей по заказам\n"
-        f"/search <фамилия> - поиск водителя\n"
-        f"/new - новые водители (последние 30 дней)\n"
-        f"/status <working/not_working/fired> - водители по статусу\n"
-        f"/driver <id> - информация о конкретном водителе\n"
-        f"/recent - последние обновления\n"
-        f"/queue - статистика очереди обновления\n"
         f"/help - подробная справка\n\n"
         f"🔐 *Реферальная система:*\n"
         f"/auth <телефон> - привязать Telegram к водителю\n"
@@ -68,25 +60,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """
 📚 *Подробная справка по командам:*
 
-📊 *Основные команды:*
-/stats - Общая статистика
-/top - Топ-10 работающих водителей по заказам
-/search <фамилия или ID> - Поиск водителей
-/new - Новые водители (последние 30 дней)
-/status <working/not_working/fired> - Водители по статусу
-/driver <id> - Информация о конкретном водителе
-/recent - История обновлений
-/queue - Статистика очереди обновления
-/export - Экспорт данных в CSV (только админ)
-
 🔐 *Реферальная система:*
 /auth <телефон> - Привязать Telegram к водителю
 /invite <телефон> - Пригласить водителя
 /my_referrals - Список моих приглашений
 /referral_stats - Статистика наград
-
-📞 *Управление данными:*
-/update_phones - Обновить номера телефонов (только админ)
 
 *Примеры использования:*
 /search Иванов
@@ -96,6 +74,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /invite +79009876543
 """
     await update.message.reply_text(help_text, parse_mode='Markdown')
+
+
 
 
 # ========== РЕФЕРАЛЬНАЯ СИСТЕМА ==========
