@@ -76,17 +76,18 @@ class Referral(Base):
     __tablename__ = 'referrals'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    referrer_id = Column(String(100), ForeignKey('drivers.driver_id'), nullable=False)  # кто пригласил
-    referred_id = Column(String(100), ForeignKey('drivers.driver_id'), nullable=False)  # кого пригласили
-    status = Column(String(20), default='pending')  # pending, completed, rewarded
-    referrer_confirmed = Column(Integer, default=0)  # 0 - нет, 1 - да
-    referred_confirmed = Column(Integer, default=0)  # 0 - нет, 1 - да
+    referrer_id = Column(String(100), ForeignKey('drivers.driver_id'), nullable=False)
+    referrer_phone = Column(String(20), nullable=True)  # ← добавить
+    referred_phone = Column(String(20), nullable=False)  # ← добавить
+    referred_id = Column(String(100), ForeignKey('drivers.driver_id'), nullable=True)  # ← сделать nullable
+    status = Column(String(20), default='pending')
+    referrer_confirmed = Column(Integer, default=0)
+    referred_confirmed = Column(Integer, default=0)
     invited_at = Column(DateTime, default=datetime.utcnow)
-    completed_at = Column(DateTime, nullable=True)  # когда выполнено 100 заказов
-    rewarded_at = Column(DateTime, nullable=True)   # когда выдана награда
+    completed_at = Column(DateTime, nullable=True)
+    rewarded_at = Column(DateTime, nullable=True)
     
-    # Уникальность: пара (referrer_id, referred_id) не может повторяться
-    __table_args__ = (UniqueConstraint('referrer_id', 'referred_id', name='unique_referral'),)
+    __table_args__ = (UniqueConstraint('referrer_id', 'referred_phone', name='unique_referral'),)
 
 
 class ReferralReward(Base):
