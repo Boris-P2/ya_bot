@@ -1,9 +1,9 @@
 import io
 import csv
 import asyncio
+from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from datetime import datetime, timedelta
 import json
 import logging
 
@@ -15,10 +15,47 @@ from collector.main import DataCollector
 logger = logging.getLogger(__name__)
 
 
+# ========== КЛАВИАТУРЫ ==========
+
+def get_main_keyboard(is_authorized: bool = False):
+    """Главная клавиатура (меню)"""
+    keyboard = []
+    
+    if not is_authorized:
+        # Не авторизован — показываем только кнопку входа
+        keyboard.append([InlineKeyboardButton("🔐 Войти по номеру телефона", callback_data="auth")])
+    else:
+        # Авторизован — полное меню
+        keyboard.append([
+            InlineKeyboardButton("📞 Пригласить водителя", callback_data="invite"),
+            InlineKeyboardButton("👥 Мои приглашения", callback_data="my_referrals")
+        ])
+        keyboard.append([
+            InlineKeyboardButton("💰 Статус наград", callback_data="referral_stats"),
+            InlineKeyboardButton("📊 Статистика", callback_data="stats")
+        ])
+        keyboard.append([
+            InlineKeyboardButton("🏆 Топ водителей", callback_data="top"),
+            InlineKeyboardButton("🔍 Поиск", callback_data="search")
+        ])
+        keyboard.append([
+            InlineKeyboardButton("❓ Помощь", callback_data="help"),
+            InlineKeyboardButton("🚪 Выйти", callback_data="logout")
+        ])
+    
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_back_keyboard():
+    """Клавиатура с кнопкой 'Назад'"""
+    keyboard = [[InlineKeyboardButton("◀️ Назад в меню", callback_data="menu")]]
+    return InlineKeyboardMarkup(keyboard)
+
+
 # ========== ОСНОВНЫЕ КОМАНДЫ ==========
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /start"""
+    """Команда /start - приветствие и главное меню"""
     user = update.effective_user
     
     # Сохраняем пользователя
@@ -30,54 +67,600 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             username=user.username,
             is_admin=user.id in settings.ADMIN_IDS
         )
+        
+        # Проверяем, авторизован ли пользователь
+        driver = crud.get_driver_by_telegram_id(db, user.id)
+        is_authorized = driver is not None
+        
     finally:
         db.close()
     
-    keyboard = []
-    if update.effective_user.id in settings.ADMIN_IDS:
-        keyboard.append([InlineKeyboardButton("📊 Экспорт данных", callback_data="export")])
-        keyboard.append([InlineKeyboardButton("📞 Обновить телефоны", callback_data="update_phones")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+    # Приветственное сообщение
+    welcome_text = (
+        f"👋 *Привет, {user.first_name}!*\n\n"
+        f"🤝 Этот бот помогает приглашать водителей в парк Яндекс.Такси.\n\n"
+        f"💰 *Как это работает:*\n"
+        f"• Вы приглашаете водителя по номеру телефона\n"
+        f"• Когда приглашённый водитель выполнит 100 заказов за месяц\n"
+        f"• Вы получаете бонусное вознаграждение!\n\n"
+        f"📱 *Для начала работы:*\n"
+        f"1. Нажмите кнопку «Войти по номеру телефона»\n"
+        f"2. Введите ваш номер телефона в формате +79001234567\n"
+        f"3. После авторизации вам станут доступны все функции\n\n"
+        f"_Приглашайте водителей и зарабатывайте бонусы!_"
+    )
     
     await update.message.reply_text(
-        f"👋 Привет, {user.first_name}!\n\n"
-        f"Я бот для доступа к данным водителей Яндекс.Такси.\n\n"
-        f"📋 *Доступные команды:*\n"
-        f"/help - подробная справка\n\n"
-        f"🔐 *Реферальная система:*\n"
-        f"/auth <телефон> - привязать Telegram к водителю\n"
-        f"/invite <телефон> - пригласить водителя\n"
-        f"/my_referrals - мои приглашения\n"
-        f"/referral_stats - статистика наград",
+        welcome_text,
         parse_mode='Markdown',
-        reply_markup=reply_markup
+        reply_markup=get_main_keyboard(is_authorized)
     )
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /help"""
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат в главное меню"""
+    query = update.callback_query
+    await query.answer()
+    
+    user = update.effective_user
+    
+    db = SessionLocal()
+    try:
+        driver = crud.get_driver_by_telegram_id(db, user.id)
+        is_authorized = driver is not None
+    finally:
+        db.close()
+    
+    await query.edit_message_text(
+        "📋 *Главное меню*\n\nВыберите действие:",
+        parse_mode='Markdown',
+        reply_markup=get_main_keyboard(is_authorized)
+    )
+
+
+# ========== АВТОРИЗАЦИЯ ==========
+
+async def auth_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка нажатия кнопки 'Войти по номеру телефона'"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Устанавливаем состояние ожидания ввода номера телефона
+    context.user_data['awaiting_auth_phone'] = True
+    
+    await query.edit_message_text(
+        "🔐 *Вход по номеру телефона*\n\n"
+        "Пожалуйста, введите ваш номер телефона в формате:\n"
+        "`+79001234567`\n\n"
+        "_Номер должен совпадать с номером, указанным в профиле Яндекс.Такси_",
+        parse_mode='Markdown',
+        reply_markup=get_back_keyboard()
+    )
+
+
+async def handle_auth_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка ввода номера телефона для авторизации"""
+    if not context.user_data.get('awaiting_auth_phone'):
+        return
+    
+    user = update.effective_user
+    phone = update.message.text.strip()
+    
+    # Нормализуем номер
+    phone_clean = phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+    
+    db = SessionLocal()
+    try:
+        driver = crud.get_driver_by_phone(db, phone_clean)
+        
+        if not driver:
+            await update.message.reply_text(
+                f"❌ Водитель с номером {phone} не найден в базе данных.\n\n"
+                f"Убедитесь, что:\n"
+                f"1. Номер указан в формате +79001234567\n"
+                f"2. Ваш номер телефона есть в базе (он обновляется раз в сутки)\n\n"
+                f"Попробуйте снова или нажмите 'Назад'.",
+                reply_markup=get_back_keyboard()
+            )
+            return
+        
+        # Проверяем, не привязан ли уже этот аккаунт
+        existing = crud.get_driver_by_telegram_id(db, user.id)
+        if existing and existing.driver_id != driver.driver_id:
+            await update.message.reply_text(
+                f"⚠️ Ваш Telegram аккаунт уже привязан к другому водителю.\n"
+                f"Свяжитесь с администратором для смены привязки.",
+                reply_markup=get_back_keyboard()
+            )
+            return
+        
+        # Привязываем Telegram ID
+        driver.telegram_id = user.id
+        db.commit()
+        
+        # Очищаем состояние
+        context.user_data.pop('awaiting_auth_phone', None)
+        
+        await update.message.reply_text(
+            f"✅ *Аккаунт привязан!*\n\n"
+            f"👤 Водитель: {driver.last_name or 'Без имени'}\n"
+            f"📞 Телефон: {driver.phone}\n"
+            f"📦 Заказов: {driver.orders_count}\n\n"
+            f"Теперь вам доступны все функции бота!",
+            parse_mode='Markdown',
+            reply_markup=get_main_keyboard(is_authorized=True)
+        )
+        
+    finally:
+        db.close()
+
+
+# ========== ПРИГЛАШЕНИЯ ==========
+
+async def invite_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка нажатия кнопки 'Пригласить водителя'"""
+    query = update.callback_query
+    await query.answer()
+    
+    user = update.effective_user
+    
+    db = SessionLocal()
+    try:
+        driver = crud.get_driver_by_telegram_id(db, user.id)
+        
+        if not driver:
+            await query.edit_message_text(
+                "❌ Вы не авторизованы.\n\n"
+                "Сначала нажмите кнопку «Войти по номеру телефона»",
+                reply_markup=get_back_keyboard()
+            )
+            return
+        
+        # Устанавливаем состояние ожидания ввода номера для приглашения
+        context.user_data['awaiting_invite_phone'] = True
+        
+        await query.edit_message_text(
+            "📞 *Пригласить водителя*\n\n"
+            "Введите номер телефона водителя, которого хотите пригласить:\n"
+            "`+79001234567`\n\n"
+            "_Приглашать можно только водителей, зарегистрированных в течение последних 3 дней_\n\n"
+            "⚠️ Лимит: не более 3 одновременных ожидающих приглашений",
+            parse_mode='Markdown',
+            reply_markup=get_back_keyboard()
+        )
+        
+    finally:
+        db.close()
+
+
+async def handle_invite_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка ввода номера телефона для приглашения"""
+    if not context.user_data.get('awaiting_invite_phone'):
+        return
+    
+    user = update.effective_user
+    target_phone = update.message.text.strip()
+    target_phone_clean = target_phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+    
+    db = SessionLocal()
+    try:
+        driver = crud.get_driver_by_telegram_id(db, user.id)
+        
+        if not driver:
+            await update.message.reply_text(
+                "❌ Вы не авторизованы.\n"
+                "Используйте кнопку «Войти по номеру телефона»",
+                reply_markup=get_back_keyboard()
+            )
+            context.user_data.pop('awaiting_invite_phone', None)
+            return
+        
+        # Проверяем, не приглашает ли себя
+        if driver.phone == target_phone_clean:
+            await update.message.reply_text(
+                "❌ Нельзя пригласить самого себя",
+                reply_markup=get_back_keyboard()
+            )
+            context.user_data.pop('awaiting_invite_phone', None)
+            return
+        
+        # Проверяем лимит ожидающих приглашений
+        pending_count = crud.count_pending_invites(db, driver.driver_id)
+        if pending_count >= 3:
+            await update.message.reply_text(
+                f"❌ У вас уже {pending_count} активных приглашений в ожидании.\n"
+                f"Максимальное количество: 3.\n"
+                f"Дождитесь регистрации приглашённых водителей.",
+                reply_markup=get_back_keyboard()
+            )
+            context.user_data.pop('awaiting_invite_phone', None)
+            return
+        
+        # Проверяем дату регистрации (если водитель уже в базе)
+        referred = crud.get_driver_by_phone(db, target_phone_clean)
+        if referred:
+            if referred.created_date:
+                try:
+                    if 'T' in referred.created_date:
+                        created_date_str = referred.created_date.split('T')[0]
+                    else:
+                        created_date_str = referred.created_date[:10]
+                    
+                    created_date = datetime.strptime(created_date_str, '%Y-%m-%d')
+                    days_ago = (datetime.utcnow() - created_date).days
+                    
+                    if days_ago >= 3:
+                        await update.message.reply_text(
+                            f"❌ Водитель {referred.last_name or 'Без имени'} зарегистрирован {days_ago} дней назад.\n\n"
+                            f"Приглашать можно только водителей, зарегистрированных в течение последних 3 дней.",
+                            reply_markup=get_back_keyboard()
+                        )
+                        context.user_data.pop('awaiting_invite_phone', None)
+                        return
+                except Exception as e:
+                    logger.error(f"Error parsing created_date: {e}")
+        
+        # Создаём приглашение
+        referral = crud.create_referral(db, driver.driver_id, target_phone_clean)
+        
+        if referral:
+            remaining_orders = max(0, 100 - (referred.orders_count if referred else 0))
+            await update.message.reply_text(
+                f"✅ *Приглашение отправлено!*\n\n"
+                f"📞 Номер: {target_phone}\n"
+                f"🎯 Осталось заказов до награды: {remaining_orders}\n\n"
+                f"_Когда водитель выполнит условие, вы получите уведомление_",
+                parse_mode='Markdown',
+                reply_markup=get_main_keyboard(is_authorized=True)
+            )
+        else:
+            # Проверяем, существует ли уже приглашение
+            existing = db.query(models.Referral).filter(
+                models.Referral.referrer_id == driver.driver_id,
+                models.Referral.referred_phone == target_phone_clean
+            ).first()
+            
+            if existing:
+                await update.message.reply_text(
+                    f"⏳ Вы уже приглашали номер {target_phone}\n"
+                    f"Статус: {existing.status}",
+                    reply_markup=get_back_keyboard()
+                )
+            else:
+                await update.message.reply_text(
+                    f"❌ Ошибка при создании приглашения",
+                    reply_markup=get_back_keyboard()
+                )
+        
+        context.user_data.pop('awaiting_invite_phone', None)
+        
+    except Exception as e:
+        logger.error(f"Invite error: {e}")
+        await update.message.reply_text(
+            f"❌ Ошибка: {str(e)}",
+            reply_markup=get_back_keyboard()
+        )
+        context.user_data.pop('awaiting_invite_phone', None)
+    finally:
+        db.close()
+
+
+# ========== ПРИГЛАШЕНИЯ (СПИСОК) ==========
+
+async def my_referrals_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка нажатия кнопки 'Мои приглашения'"""
+    query = update.callback_query
+    await query.answer()
+    
+    user = update.effective_user
+    
+    db = SessionLocal()
+    try:
+        driver = crud.get_driver_by_telegram_id(db, user.id)
+        
+        if not driver:
+            await query.edit_message_text(
+                "❌ Вы не авторизованы.\n\n"
+                "Сначала нажмите кнопку «Войти по номеру телефона»",
+                reply_markup=get_back_keyboard()
+            )
+            return
+        
+        # Получаем приглашения
+        referrals = crud.get_referrals_by_driver(db, driver.driver_id)
+        pending_invites = crud.get_pending_invites_by_referrer(db, driver.driver_id)
+        
+        if not referrals and not pending_invites:
+            await query.edit_message_text(
+                "📋 *Ваши приглашения*\n\n"
+                "У вас пока нет приглашений.\n\n"
+                "Нажмите «Пригласить водителя», чтобы начать!",
+                parse_mode='Markdown',
+                reply_markup=get_back_keyboard()
+            )
+            return
+        
+        response = "📋 *Ваши приглашения*\n\n"
+        
+        # Обычные приглашения
+        for ref in referrals[:10]:
+            referred = crud.get_driver(db, ref.referred_id) if ref.referred_id else None
+            referred_name = referred.last_name if referred else ref.referred_phone
+            
+            status_emoji = {
+                'pending': '⏳',
+                'completed': '✅',
+                'rewarded': '🎁'
+            }.get(ref.status, '❓')
+            
+            status_text = {
+                'pending': 'ожидает',
+                'completed': 'выполнено!',
+                'rewarded': 'награда получена'
+            }.get(ref.status, ref.status)
+            
+            response += f"{status_emoji} {referred_name} — {status_text}\n"
+        
+        # Ожидающие приглашения
+        for invite in pending_invites:
+            days_left = max(0, 7 - (datetime.utcnow() - invite.invited_at).days)
+            response += f"⏳ {invite.phone} — ожидает регистрации ({days_left} дн.)\n"
+        
+        if len(referrals) > 10:
+            response += f"\n*... и еще {len(referrals) - 10} приглашений*"
+        
+        await query.edit_message_text(
+            response,
+            parse_mode='Markdown',
+            reply_markup=get_back_keyboard()
+        )
+        
+    finally:
+        db.close()
+
+
+# ========== СТАТИСТИКА НАГРАД ==========
+
+async def referral_stats_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка нажатия кнопки 'Статус наград'"""
+    query = update.callback_query
+    await query.answer()
+    
+    user = update.effective_user
+    
+    db = SessionLocal()
+    try:
+        driver = crud.get_driver_by_telegram_id(db, user.id)
+        
+        if not driver:
+            await query.edit_message_text(
+                "❌ Вы не авторизованы.\n\n"
+                "Сначала нажмите кнопку «Войти по номеру телефона»",
+                reply_markup=get_back_keyboard()
+            )
+            return
+        
+        stats = crud.get_reward_stats(db, driver.driver_id)
+        
+        all_referrals = crud.get_referrals_by_driver(db, driver.driver_id)
+        completed = sum(1 for r in all_referrals if r.status in ['completed', 'rewarded'])
+        pending = sum(1 for r in all_referrals if r.status == 'pending')
+        pending_invites = crud.count_pending_invites(db, driver.driver_id)
+        
+        response = (
+            f"💰 *Ваша реферальная статистика*\n\n"
+            f"👥 Приглашено водителей: {completed + pending}\n"
+            f"✅ Выполнили 100+ заказов: {completed}\n"
+            f"⏳ Ожидают выполнения: {pending}\n"
+            f"📞 Ожидают регистрации: {pending_invites}\n\n"
+            f"🎁 Награда ожидает выдачи: {stats['pending']} бонусов\n"
+            f"🏆 Получено наград: {stats['total']} бонусов\n\n"
+            f"_Приглашайте новых водителей и получайте бонусы!_"
+        )
+        
+        await query.edit_message_text(
+            response,
+            parse_mode='Markdown',
+            reply_markup=get_back_keyboard()
+        )
+        
+    finally:
+        db.close()
+
+
+# ========== СТАТИСТИКА ==========
+
+async def stats_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка нажатия кнопки 'Статистика'"""
+    query = update.callback_query
+    await query.answer()
+    
+    db = SessionLocal()
+    try:
+        stats = crud.get_driver_statistics(db)
+        
+        response = (
+            f"📈 *Статистика парка*\n\n"
+            f"👥 Всего водителей: {stats['total']}\n"
+            f"🟢 Работают: {stats['working']}\n"
+            f"🟡 Не работают: {stats['not_working']}\n"
+            f"🔴 Уволены: {stats['fired']}\n"
+            f"✨ Новые (30 дней): {stats['new_last_30_days']}\n"
+            f"📊 Среднее заказов: {stats['avg_orders']}\n"
+        )
+        
+        await query.edit_message_text(
+            response,
+            parse_mode='Markdown',
+            reply_markup=get_back_keyboard()
+        )
+        
+    finally:
+        db.close()
+
+
+# ========== ТОП ВОДИТЕЛЕЙ ==========
+
+async def top_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка нажатия кнопки 'Топ водителей'"""
+    query = update.callback_query
+    await query.answer()
+    
+    db = SessionLocal()
+    try:
+        drivers = db.query(models.Driver).filter(
+            models.Driver.work_status == 'working'
+        ).order_by(
+            models.Driver.orders_count.desc()
+        ).limit(10).all()
+        
+        if not drivers:
+            await query.edit_message_text(
+                "Нет данных о водителях",
+                reply_markup=get_back_keyboard()
+            )
+            return
+        
+        response = "🏆 *Топ-10 водителей по заказам:*\n\n"
+        for i, driver in enumerate(drivers, 1):
+            response += f"{i}. {driver.last_name or 'Водитель'}\n"
+            response += f"   📦 {driver.orders_count} заказов\n\n"
+        
+        await query.edit_message_text(
+            response,
+            parse_mode='Markdown',
+            reply_markup=get_back_keyboard()
+        )
+        
+    finally:
+        db.close()
+
+
+# ========== ПОИСК ==========
+
+async def search_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка нажатия кнопки 'Поиск'"""
+    query = update.callback_query
+    await query.answer()
+    
+    context.user_data['awaiting_search'] = True
+    
+    await query.edit_message_text(
+        "🔍 *Поиск водителя*\n\n"
+        "Введите фамилию или ID водителя для поиска:",
+        parse_mode='Markdown',
+        reply_markup=get_back_keyboard()
+    )
+
+
+async def handle_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка ввода поискового запроса"""
+    if not context.user_data.get('awaiting_search'):
+        return
+    
+    query = update.message.text.strip()
+    
+    db = SessionLocal()
+    try:
+        drivers = crud.search_drivers(db, query)
+        
+        if not drivers:
+            await update.message.reply_text(
+                f"❌ Водители по запросу '{query}' не найдены",
+                reply_markup=get_back_keyboard()
+            )
+            context.user_data.pop('awaiting_search', None)
+            return
+        
+        response = f"🔍 *Результаты поиска:*\n\n"
+        for driver in drivers[:10]:
+            response += f"👤 {driver.last_name or 'Без имени'}\n"
+            response += f"   🆔 ID: `{driver.driver_id[:12]}...`\n"
+            response += f"   📦 Заказов: {driver.orders_count}\n"
+            status_emoji = "🟢" if driver.work_status == "working" else "🟡" if driver.work_status == "not_working" else "🔴"
+            response += f"   {status_emoji} Статус: {driver.work_status}\n\n"
+        
+        await update.message.reply_text(
+            response[:4096],
+            parse_mode='Markdown',
+            reply_markup=get_back_keyboard()
+        )
+        
+        context.user_data.pop('awaiting_search', None)
+        
+    finally:
+        db.close()
+
+
+# ========== ВЫХОД ==========
+
+async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка нажатия кнопки 'Выйти'"""
+    query = update.callback_query
+    await query.answer()
+    
+    user = update.effective_user
+    
+    db = SessionLocal()
+    try:
+        driver = crud.get_driver_by_telegram_id(db, user.id)
+        
+        if driver:
+            driver.telegram_id = None
+            db.commit()
+        
+        await query.edit_message_text(
+            "👋 *До свидания!*\n\n"
+            "Вы вышли из аккаунта.\n\n"
+            "Чтобы снова пользоваться ботом, нажмите кнопку «Войти по номеру телефона»",
+            parse_mode='Markdown',
+            reply_markup=get_main_keyboard(is_authorized=False)
+        )
+        
+    finally:
+        db.close()
+
+
+# ========== ПОМОЩЬ ==========
+
+async def help_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка нажатия кнопки 'Помощь'"""
+    query = update.callback_query
+    await query.answer()
+    
     help_text = """
-📚 *Подробная справка по командам:*
+❓ *Как пользоваться ботом*
 
-🔐 *Реферальная система:*
-/auth <телефон> - Привязать Telegram к водителю
-/invite <телефон> - Пригласить водителя
-/my_referrals - Список моих приглашений
-/referral_stats - Статистика наград
+1️⃣ *Вход в систему*
+   • Нажмите «Войти по номеру телефона»
+   • Введите ваш номер в формате +79001234567
 
-*Примеры использования:*
-/search Иванов
-/status working
-/driver 123456789
-/auth +79001234567
-/invite +79009876543
+2️⃣ *Приглашение водителей*
+   • Нажмите «Пригласить водителя»
+   • Введите номер телефона приглашаемого
+
+3️⃣ *Отслеживание прогресса*
+   • «Мои приглашения» — статус ваших приглашений
+   • «Статус наград» — сколько бонусов вы заработали
+
+4️⃣ *Условия получения награды*
+   • Приглашённый водитель должен сделать 100 заказов
+   • Награда начисляется автоматически
+
+📞 *Поддержка:* /help_admin (для администраторов)
 """
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+    
+    await query.edit_message_text(
+        help_text,
+        parse_mode='Markdown',
+        reply_markup=get_back_keyboard()
+    )
+
+
+# ========== АДМИНИСТРАТОРСКАЯ СПРАВКА ==========
 
 async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /help_admin - полная справка для администратора (только для ADMIN_IDS)"""
-    # Проверка по ADMIN_IDS из переменных окружения
+    """Команда /help_admin - полная справка для администратора"""
     if update.effective_user.id not in settings.ADMIN_IDS:
         await update.message.reply_text("⛔ У вас нет прав для этой команды")
         return
@@ -117,415 +700,37 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Сбор данных о водителях: каждые 6 часов
 • Обновление телефонов: каждые 6 часов
 • Обработка приглашений: каждые 6 часов
-
-📊 *Статистика системы:* /stats, /queue, /phonestatus
 """
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
-# ========== РЕФЕРАЛЬНАЯ СИСТЕМА ==========
 
-async def auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /auth - привязка Telegram аккаунта к водителю по номеру телефона"""
-    user = update.effective_user
-    
-    if not context.args:
-        await update.message.reply_text(
-            "❓ Укажите номер телефона для авторизации.\n"
-            "Пример: /auth +79001234567\n\n"
-            "Номер должен совпадать с тем, который указан в вашем профиле Яндекс.Такси"
-        )
-        return
-    
-    phone = context.args[0]
-    phone_clean = phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
-    
-    db = SessionLocal()
-    try:
-        driver = crud.get_driver_by_phone(db, phone_clean)
-        
-        if not driver:
-            await update.message.reply_text(
-                f"❌ Водитель с номером {phone} не найден в базе данных.\n\n"
-                f"Убедитесь, что:\n"
-                f"1. Номер указан в формате +79001234567\n"
-                f"2. Ваш номер телефона есть в базе (он обновляется раз в сутки)"
-            )
-            return
-        
-        existing = crud.get_driver_by_telegram_id(db, user.id)
-        
-        if existing and existing.driver_id != driver.driver_id:
-            await update.message.reply_text(
-                f"⚠️ Ваш Telegram аккаунт уже привязан к другому водителю.\n"
-                f"Свяжитесь с администратором для смены привязки."
-            )
-            return
-        
-        driver.telegram_id = user.id
-        db.commit()
-        
-        await update.message.reply_text(
-            f"✅ Аккаунт привязан!\n\n"
-            f"👤 Водитель: {driver.last_name or 'Без имени'}\n"
-            f"📞 Телефон: {driver.phone or 'Не указан'}\n"
-            f"📦 Заказов: {driver.orders_count}\n\n"
-            f"📋 *Доступные команды:*\n"
-            f"/invite — пригласить водителя\n"
-            f"/my_referrals — мои приглашения\n"
-            f"/referral_stats — статистика наград",
-            parse_mode='Markdown'
-        )
-        
-    finally:
-        db.close()
+# ========== ОСНОВНЫЕ КОМАНДЫ (ТЕКСТОВЫЕ) ==========
 
-async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /whoami - информация о привязанном аккаунте"""
-    user = update.effective_user
-    
-    db = SessionLocal()
-    try:
-        driver = crud.get_driver_by_telegram_id(db, user.id)
-        
-        if not driver:
-            await update.message.reply_text(
-                "❌ Вы не авторизованы.\n"
-                "Используйте /auth +79001234567 для привязки аккаунта"
-            )
-            return
-        
-        await update.message.reply_text(
-            f"👤 *Ваш профиль*\n\n"
-            f"Фамилия: {driver.last_name or 'Не указана'}\n"
-            f"Телефон: {driver.phone or 'Не указан'}\n"
-            f"Заказов: {driver.orders_count}\n"
-            f"Статус: {driver.work_status}\n\n"
-            f"📋 /invite — пригласить водителя\n"
-            f"📋 /my_referrals — мои приглашения",
-            parse_mode='Markdown'
-        )
-        
-    finally:
-        db.close()
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /help - справка по реферальной системе"""
+    help_text = """
+🔐 *Реферальная система приглашений*
 
-async def invite_driver(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /invite <телефон> - пригласить водителя по номеру телефона"""
-    user = update.effective_user
-    
-    db = SessionLocal()
-    try:
-        # Проверяем авторизацию
-        driver = crud.get_driver_by_telegram_id(db, user.id)
-        
-        if not driver:
-            await update.message.reply_text(
-                "❌ Вы не авторизованы.\n"
-                "Используйте /auth +79001234567 для привязки аккаунта"
-            )
-            return
-        
-        if not context.args:
-            await update.message.reply_text(
-                "❓ Укажите номер телефона водителя, которого хотите пригласить.\n"
-                "Пример: /invite +79001234567"
-            )
-            return
-        
-        target_phone = context.args[0]
-        target_phone_clean = target_phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
-        
-        # Ищем приглашаемого водителя по телефону
-        referred = crud.get_driver_by_phone(db, target_phone_clean)
-        
-        if not referred:
-            # Проверяем, есть ли уже приглашение в ожидающих
-            pending = crud.get_pending_invite_by_phone(db, driver.driver_id, target_phone_clean)
-            if pending:
-                await update.message.reply_text(
-                    f"⏳ Приглашение для номера {target_phone} уже отправлено и ожидает регистрации водителя.\n"
-                    f"Дата отправки: {pending.invited_at.strftime('%Y-%m-%d %H:%M')}"
-                )
-                return
-            
-            # Проверяем лимит ожидающих приглашений (не более 3)
-            pending_count = crud.count_pending_invites(db, driver.driver_id)
-            if pending_count >= 3:
-                await update.message.reply_text(
-                    f"❌ У вас уже {pending_count} активных приглашений в ожидании.\n"
-                    f"Максимальное количество одновременных приглашений: 3.\n"
-                    f"Дождитесь регистрации приглашённых водителей или отмены старых приглашений."
-                )
-                return
-            
-            # Создаём ожидающее приглашение
-            pending_invite = crud.create_pending_invite(db, driver.driver_id, target_phone_clean)
-            
-            await update.message.reply_text(
-                f"📞 Приглашение для номера {target_phone} отправлено!\n\n"
-                f"⏳ Статус: ожидает регистрации водителя\n"
-                f"📅 Дата отправки: {pending_invite.invited_at.strftime('%Y-%m-%d %H:%M')}\n"
-                f"⏰ Приглашение будет активно 7 дней.\n\n"
-                f"_Если водитель зарегистрируется в течение недели, приглашение будет автоматически подтверждено._",
-                parse_mode='Markdown'
-            )
-            return
-        
-        # ========== ПРОВЕРКА 1: ДАТА РЕГИСТРАЦИИ (не ранее 3 дней) ==========
-        if referred.created_date:
-            try:
-                if 'T' in referred.created_date:
-                    created_date_str = referred.created_date.split('T')[0]
-                else:
-                    created_date_str = referred.created_date[:10]
-                
-                created_date = datetime.strptime(created_date_str, '%Y-%m-%d')
-                days_ago = (datetime.utcnow() - created_date).days
-                
-                if days_ago >= 3:
-                    await update.message.reply_text(
-                        f"❌ Водитель {referred.last_name or 'Без имени'} зарегистрирован {days_ago} дней назад.\n\n"
-                        f"Приглашать можно только водителей, зарегистрированных в течение последних 3 дней.\n"
-                        f"Дата регистрации: {created_date_str}"
-                    )
-                    return
-            except Exception as e:
-                logger.error(f"Error parsing created_date: {e}")
-                await update.message.reply_text(
-                    f"❌ Не удалось определить дату регистрации водителя.\n"
-                    f"Попробуйте позже."
-                )
-                return
-        else:
-            await update.message.reply_text(
-                f"❌ Не удалось определить дату регистрации водителя {referred.last_name or 'Без имени'}.\n\n"
-                f"Приглашать можно только водителей, зарегистрированных в течение последних 3 дней."
-            )
-            return
-        
-        # ========== ПРОВЕРКА 2: НЕЛЬЗЯ ПРИГЛАСИТЬ СЕБЯ ==========
-        if referred.driver_id == driver.driver_id:
-            await update.message.reply_text("❌ Нельзя пригласить самого себя")
-            return
-        
-        # ========== ПРОВЕРКА 3: ЗАПРЕТ ВЗАИМНЫХ ПРИГЛАШЕНИЙ ==========
-        # Проверяем, не приглашал ли уже этот водитель текущего
-        reverse_referral = crud.get_referrer_by_driver(db, driver.driver_id)
-        
-        if reverse_referral and reverse_referral.referrer_id == referred.driver_id:
-            await update.message.reply_text(
-                f"❌ Невозможно пригласить этого водителя.\n\n"
-                f"Водитель {referred.last_name or 'Без имени'} уже пригласил вас.\n"
-                f"Взаимные приглашения запрещены."
-            )
-            return
-        
-        # ========== ПРОВЕРКА 4: СУЩЕСТВУЮЩЕЕ ПРИГЛАШЕНИЕ ==========
-        existing = crud.get_referrals_by_driver(db, driver.driver_id)
-        existing_for_referred = any(r.referred_phone == target_phone_clean for r in existing)
-        
-        if existing_for_referred:
-            await update.message.reply_text(f"❌ Вы уже приглашали этот номер телефона.")
-            return
-        
-        # ========== СОЗДАНИЕ ПРИГЛАШЕНИЯ ==========
-        # ВАЖНО: передаём номер телефона, а не driver_id!
-        referral = crud.create_referral(db, driver.driver_id, target_phone_clean)
-        
-        if referral:
-            remaining_orders = max(0, 100 - referred.orders_count)
-            await update.message.reply_text(
-                f"✅ Приглашение отправлено!\n\n"
-                f"👤 Водитель: {referred.last_name or 'Без имени'}\n"
-                f"📞 Телефон: {referred.phone or 'Не указан'}\n"
-                f"📦 Текущее количество заказов: {referred.orders_count}\n\n"
-                f"🎯 Осталось заказов до награды: {remaining_orders}\n"
-                f"💰 Награда: 100 бонусов\n\n"
-                f"_Приглашение привязано к номеру телефона и сохранится даже при смене профиля_",
-                parse_mode='Markdown'
-            )
-        else:
-            await update.message.reply_text("❌ Ошибка при создании приглашения")
-            
-    except Exception as e:
-        logger.error(f"Invite error: {e}")
-        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
-    finally:
-        db.close()
+📋 *Доступные команды:*
 
-async def my_referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /my_referrals - список моих приглашений"""
-    user = update.effective_user
-    
-    db = SessionLocal()
-    try:
-        driver = crud.get_driver_by_telegram_id(db, user.id)
-        
-        if not driver:
-            await update.message.reply_text(
-                "❌ Вы не авторизованы.\n"
-                "Используйте /auth +79001234567 для привязки аккаунта"
-            )
-            return
-        
-        # Получаем обычные приглашения
-        referrals = crud.get_referrals_by_driver(db, driver.driver_id)
-        
-        # Получаем ожидающие приглашения
-        pending_invites = crud.get_pending_invites_by_referrer(db, driver.driver_id)
-        
-        if not referrals and not pending_invites:
-            await update.message.reply_text(
-                "📋 У вас пока нет приглашений.\n\n"
-                "Используйте /invite +79001234567, чтобы пригласить водителя"
-            )
-            return
-        
-        response = "📋 *Ваши приглашения:*\n\n"
-        
-        # Обычные приглашения
-        for ref in referrals[:20]:
-            referred = crud.get_driver(db, ref.referred_id)
-            referred_name = referred.last_name[:12] + "..." if referred and len(referred.last_name or '') > 15 else (referred.last_name if referred else "Водитель")
-            
-            status_emoji = {
-                'pending': '⏳',
-                'completed': '✅',
-                'rewarded': '🎁'
-            }.get(ref.status, '❓')
-            
-            status_text = {
-                'pending': 'ожидает',
-                'completed': 'выполнено (награда готова)',
-                'rewarded': 'награда получена'
-            }.get(ref.status, ref.status)
-            
-            response += f"{status_emoji} {referred_name} — {status_text}\n"
-        
-        # Ожидающие приглашения
-        for invite in pending_invites:
-            days_left = max(0, 7 - (datetime.utcnow() - invite.invited_at).days)
-            phone_display = invite.phone[:10] if len(invite.phone) > 10 else invite.phone
-            response += f"⏳ {phone_display}*** — ожидает регистрации ({days_left} дн.)\n"
-        
-        if len(referrals) > 20:
-            response += f"\n*... и еще {len(referrals) - 20} приглашений*"
-        
-        await update.message.reply_text(response, parse_mode='Markdown')
-        
-    finally:
-        db.close()
+/auth <телефон> - Привязать Telegram к водителю
+   Пример: /auth +79001234567
 
+/invite <телефон> - Пригласить водителя
+   Пример: /invite +79009876543
 
-async def referral_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /referral_stats - статистика наград"""
-    user = update.effective_user
-    
-    db = SessionLocal()
-    try:
-        driver = crud.get_driver_by_telegram_id(db, user.id)
-        
-        if not driver:
-            await update.message.reply_text(
-                "❌ Вы не авторизованы.\n"
-                "Используйте /auth +79001234567 для привязки аккаунта"
-            )
-            return
-        
-        stats = crud.get_reward_stats(db, driver.driver_id)
-        
-        # Получаем все приглашения через crud
-        all_referrals = crud.get_referrals_by_driver(db, driver.driver_id)
-        completed = sum(1 for r in all_referrals if r.status in ['completed', 'rewarded'])
-        pending = sum(1 for r in all_referrals if r.status == 'pending')
-        
-        pending_invites = crud.count_pending_invites(db, driver.driver_id)
-        
-        await update.message.reply_text(
-            f"💰 *Реферальная статистика*\n\n"
-            f"👥 Приглашено водителей: {completed + pending}\n"
-            f"✅ Завершено (100 заказов): {completed}\n"
-            f"⏳ Ожидают выполнения: {pending}\n"
-            f"📞 Ожидают регистрации: {pending_invites}\n\n"
-            f"🎁 Ожидает награда: {stats['pending']} бонусов\n"
-            f"🏆 Получено наград: {stats['total']} бонусов\n\n"
-            f"_Приглашайте водителей и получайте бонусы!_",
-            parse_mode='Markdown'
-        )
-        
-    finally:
-        db.close()
+/myreferrals - Список моих приглашений
+/referralstats - Статистика наград
 
+📊 *Как это работает:*
+1. Привяжите свой аккаунт через /auth
+2. Приглашайте новых водителей через /invite
+3. Когда приглашённый сделает 100 заказов, вы получите награду
 
-# ========== ОБНОВЛЕНИЕ ТЕЛЕФОНОВ ==========
+📞 *Другие команды:* /stats, /top, /search, /new, /status, /driver, /recent
+"""
+    await update.message.reply_text(help_text, parse_mode='Markdown')
 
-async def update_phones(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /update_phones [days] - обновление телефонов (админ)"""
-    if update.effective_user.id not in settings.ADMIN_IDS:
-        await update.message.reply_text("⛔ У вас нет прав для этой команды")
-        return
-    
-    days = 30
-    if context.args and context.args[0].isdigit():
-        days = int(context.args[0])
-    
-    await update.message.reply_text(f"📞 Начинаю обновление номеров телефонов (за последние {days} дней)...\n⚠️ Это может занять несколько минут")
-    
-    async def run():
-        try:
-            result = await asyncio.to_thread(
-                DataCollector().update_all_driver_phones,
-                batch_size=500,
-                days_stale=days
-            )
-            await update.message.reply_text(
-                f"✅ Обновление завершено!\n\n"
-                f"📞 Обновлено: {result['updated']}\n"
-                f"❌ Ошибок: {len(result['errors'])}\n\n"
-                f"_Следующее автоматическое обновление через 6 часов_",
-                parse_mode='Markdown'
-            )
-        except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка: {str(e)}")
-    
-    asyncio.create_task(run())
-
-
-async def phone_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /phonestatus - статус телефонов в базе"""
-    if update.effective_user.id not in settings.ADMIN_IDS:
-        await update.message.reply_text("⛔ У вас нет прав для этой команды")
-        return
-    
-    db = SessionLocal()
-    try:
-        total = db.query(models.Driver).count()
-        with_phone = db.query(models.Driver).filter(
-            models.Driver.phone.isnot(None),
-            models.Driver.phone != ''
-        ).count()
-        without_phone = total - with_phone
-        
-        last = db.query(models.Driver).filter(
-            models.Driver.phone_updated_at.isnot(None)
-        ).order_by(models.Driver.phone_updated_at.desc()).first()
-        
-        last_time = last.phone_updated_at.strftime('%Y-%m-%d %H:%M') if last and last.phone_updated_at else 'никогда'
-        
-        await update.message.reply_text(
-            f"📊 *Статус телефонов водителей:*\n"
-            f"👥 Всего: {total}\n"
-            f"📞 С телефонами: {with_phone}\n"
-            f"❌ Без телефонов: {without_phone}\n"
-            f"📈 Прогресс: {round(with_phone/total*100, 1)}%\n"
-            f"🕐 Последнее обновление: {last_time}\n\n"
-            f"_Автоматическое обновление: каждые 6 часов_",
-            parse_mode='Markdown'
-        )
-    finally:
-        db.close()
-
-
-# ========== ОСНОВНЫЕ КОМАНДЫ (СТАТИСТИКА, ПОИСК И Т.Д.) ==========
 
 async def get_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /stats - статистика"""
@@ -785,7 +990,9 @@ async def queue_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         db.close()
 
+
 # ========== ЭКСПОРТ ==========
+
 async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт всех водителей в CSV файл с реферальной статистикой"""
     if update.effective_user.id not in settings.ADMIN_IDS:
@@ -797,18 +1004,24 @@ async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = SessionLocal()
     
     try:
-        # Получаем общее количество водителей
         total = db.query(models.Driver).count()
         
         if total == 0:
             await update.message.reply_text("Нет данных для экспорта")
             return
         
-        # Создаём CSV в памяти
+        MAX_ROWS = 15000
+        if total > MAX_ROWS:
+            await update.message.reply_text(
+                f"⚠️ В базе {total} водителей, что превышает лимит экспорта ({MAX_ROWS}).\n"
+                f"Будут экспортированы первые {MAX_ROWS} водителей.",
+                reply_markup=get_back_keyboard()
+            )
+            total = MAX_ROWS
+        
         output = io.StringIO()
         writer = csv.writer(output, delimiter=';')
         
-        # Расширенные заголовки с реферальной информацией
         writer.writerow([
             'ID', 'Фамилия', 'Статус', 'Заказы', 
             'Баланс', 'Валюта', 'Текущий статус', 
@@ -818,27 +1031,21 @@ async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'Количество наград', 'Сумма наград (бонусы)', 'Кто пригласил (ID)'
         ])
         
-        # Экспортируем пачками по 500 записей
         batch_size = 500
         offset = 0
         last_progress = 0
         
         while offset < total:
-            # Получаем пачку водителей
             drivers = db.query(models.Driver).order_by(
                 models.Driver.driver_id
-            ).offset(offset).limit(batch_size).all()
+            ).offset(offset).limit(min(batch_size, total - offset)).all()
             
-            # Собираем все ID водителей для массовой загрузки реферальных данных
             driver_ids = [d.driver_id for d in drivers]
             
-            # Массово получаем реферальные данные для всех водителей в пачке
-            # Кого пригласил этот водитель
             referrals = db.query(models.Referral).filter(
                 models.Referral.referrer_id.in_(driver_ids)
             ).all()
             
-            # Статистика по приглашениям (количество, выполненные, ID приглашённых)
             referral_stats = {}
             for r in referrals:
                 if r.referrer_id not in referral_stats:
@@ -848,39 +1055,32 @@ async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         'referred_ids': []
                     }
                 referral_stats[r.referrer_id]['count'] += 1
-                referral_stats[r.referrer_id]['referred_ids'].append(r.referred_id)
+                referral_stats[r.referrer_id]['referred_ids'].append(r.referred_phone)
                 if r.status in ['completed', 'rewarded']:
                     referral_stats[r.referrer_id]['completed'] += 1
             
-            # Кто пригласил этого водителя
             referrers = db.query(models.Referral).filter(
-                models.Referral.referred_id.in_(driver_ids)
+                models.Referral.referred_phone.in_([d.phone for d in drivers if d.phone])
             ).all()
-            referrer_map = {r.referred_id: r.referrer_id for r in referrers}
+            referrer_map = {r.referred_phone: r.referrer_id for r in referrers}
             
-            # Награды для водителей
             rewards = db.query(models.ReferralReward).filter(
                 models.ReferralReward.driver_id.in_(driver_ids)
             ).all()
             reward_stats = {}
             for rw in rewards:
                 if rw.driver_id not in reward_stats:
-                    reward_stats[rw.driver_id] = {
-                        'count': 0,
-                        'amount': 0
-                    }
+                    reward_stats[rw.driver_id] = {'count': 0, 'amount': 0}
                 reward_stats[rw.driver_id]['count'] += 1
                 if rw.status == 'paid':
                     reward_stats[rw.driver_id]['amount'] += rw.amount
             
             for driver in drivers:
-                # Реферальная статистика
                 ref = referral_stats.get(driver.driver_id, {'count': 0, 'completed': 0, 'referred_ids': []})
-                referred_ids_str = ', '.join(ref['referred_ids'][:5])  # Ограничиваем 5 ID
-                if len(ref['referred_ids']) > 5:
-                    referred_ids_str += f"... +{len(ref['referred_ids']) - 5}"
+                referred_ids_str = ', '.join(ref['referred_ids'][:3])
+                if len(ref['referred_ids']) > 3:
+                    referred_ids_str += f"... (+{len(ref['referred_ids']) - 3})"
                 
-                # Награды
                 rew = reward_stats.get(driver.driver_id, {'count': 0, 'amount': 0})
                 
                 writer.writerow([
@@ -901,35 +1101,26 @@ async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ref['completed'],
                     rew['count'],
                     rew['amount'],
-                    referrer_map.get(driver.driver_id, '')
+                    referrer_map.get(driver.phone, '') if driver.phone else ''
                 ])
             
             offset += batch_size
             
-            # Отправляем статус каждые 2000 записей
             progress = int(offset / total * 100)
             if progress >= last_progress + 10:
                 last_progress = progress
-                await update.message.reply_text(f"📊 Экспортировано {offset}/{total} записей ({progress}%)...")
+                await update.message.reply_text(f"📊 Экспортировано {min(offset, total)}/{total} записей ({progress}%)...")
         
-        # Конвертируем в bytes для отправки
         output_bytes = io.BytesIO()
         output_bytes.write(output.getvalue().encode('utf-8-sig'))
         output_bytes.seek(0)
         
-        # Отправляем файл
         await update.message.reply_document(
             document=output_bytes,
             filename=f'drivers_export_{datetime.now().strftime("%Y%m%d_%H%M")}.csv',
             caption=f'📊 Экспорт данных о водителях с реферальной статистикой\n'
-                    f'Всего записей: {total}\n'
-                    f'Дата: {datetime.now().strftime("%Y-%m-%d %H:%M")}\n\n'
-                    f'📋 *Описание колонок:*\n'
-                    f'• "Количество приглашений" — сколько водителей пригласил\n'
-                    f'• "Выполнено 100+ заказов" — сколько приглашённых сделали 100+ заказов\n'
-                    f'• "Количество наград" — сколько наград получено\n'
-                    f'• "Сумма наград" — общее количество бонусов',
-            parse_mode='Markdown'
+                    f'Всего записей: {min(total, MAX_ROWS)}\n'
+                    f'Дата: {datetime.now().strftime("%Y-%m-%d %H:%M")}'
         )
         
     except Exception as e:
@@ -939,17 +1130,73 @@ async def export_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.close()
 
 
-# ========== КНОПКИ ==========
+# ========== ОБНОВЛЕНИЕ ТЕЛЕФОНОВ ==========
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка нажатий на кнопки"""
-    query = update.callback_query
-    await query.answer()
+async def update_phones(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /update_phones [days] - обновление телефонов (админ)"""
+    if update.effective_user.id not in settings.ADMIN_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для этой команды")
+        return
     
-    if query.data == "export":
-        await export_drivers(query.message, context)
-    elif query.data == "update_phones":
-        await update_phones(query.message, context)
+    days = 30
+    if context.args and context.args[0].isdigit():
+        days = int(context.args[0])
+    
+    await update.message.reply_text(f"📞 Начинаю обновление номеров телефонов (за последние {days} дней)...\n⚠️ Это может занять несколько минут")
+    
+    async def run():
+        try:
+            result = await asyncio.to_thread(
+                DataCollector().update_all_driver_phones,
+                batch_size=500,
+                days_stale=days
+            )
+            await update.message.reply_text(
+                f"✅ Обновление завершено!\n\n"
+                f"📞 Обновлено: {result['updated']}\n"
+                f"❌ Ошибок: {len(result['errors'])}\n\n"
+                f"_Следующее автоматическое обновление через 6 часов_",
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+    
+    asyncio.create_task(run())
+
+
+async def phone_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /phonestatus - статус телефонов в базе"""
+    if update.effective_user.id not in settings.ADMIN_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для этой команды")
+        return
+    
+    db = SessionLocal()
+    try:
+        total = db.query(models.Driver).count()
+        with_phone = db.query(models.Driver).filter(
+            models.Driver.phone.isnot(None),
+            models.Driver.phone != ''
+        ).count()
+        without_phone = total - with_phone
+        
+        last = db.query(models.Driver).filter(
+            models.Driver.phone_updated_at.isnot(None)
+        ).order_by(models.Driver.phone_updated_at.desc()).first()
+        
+        last_time = last.phone_updated_at.strftime('%Y-%m-%d %H:%M') if last and last.phone_updated_at else 'никогда'
+        
+        await update.message.reply_text(
+            f"📊 *Статус телефонов водителей:*\n"
+            f"👥 Всего: {total}\n"
+            f"📞 С телефонами: {with_phone}\n"
+            f"❌ Без телефонов: {without_phone}\n"
+            f"📈 Прогресс: {round(with_phone/total*100, 1)}%\n"
+            f"🕐 Последнее обновление: {last_time}\n\n"
+            f"_Автоматическое обновление: каждые 6 часов_",
+            parse_mode='Markdown'
+        )
+    finally:
+        db.close()
 
 
 # ========== ОБРАБОТКА НЕИЗВЕСТНЫХ КОМАНД ==========
@@ -958,5 +1205,35 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка неизвестных команд"""
     await update.message.reply_text(
         "❌ Неизвестная команда.\n"
-        "Используйте /help для списка доступных команд"
+        "Используйте /help для списка доступных команд\n\n"
+        "Или нажмите /start для открытия меню"
     )
+
+
+# ========== ОБРАБОТЧИК КНОПОК ==========
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка всех нажатий на кнопки"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "menu":
+        await menu(update, context)
+    elif query.data == "auth":
+        await auth_button(update, context)
+    elif query.data == "invite":
+        await invite_button(update, context)
+    elif query.data == "my_referrals":
+        await my_referrals_button(update, context)
+    elif query.data == "referral_stats":
+        await referral_stats_button(update, context)
+    elif query.data == "stats":
+        await stats_button(update, context)
+    elif query.data == "top":
+        await top_button(update, context)
+    elif query.data == "search":
+        await search_button(update, context)
+    elif query.data == "help":
+        await help_button(update, context)
+    elif query.data == "logout":
+        await logout(update, context)
