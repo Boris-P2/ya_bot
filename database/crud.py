@@ -17,6 +17,38 @@ def normalize_phone(phone: str) -> str:
         return ''
     return re.sub(r'[^\d+]', '', phone)
 
+def update_user_consent(
+    db: Session,
+    telegram_id: int,
+    consent_given: bool,
+    ip_address: str = None
+) -> Optional[models.UserAccess]:
+    """Обновляет согласие пользователя на обработку данных"""
+    user = db.query(models.UserAccess).filter(
+        models.UserAccess.telegram_id == telegram_id
+    ).first()
+    
+    if user:
+        user.consent_given = 1 if consent_given else 0
+        if consent_given:
+            user.consent_date = datetime.utcnow()
+            if ip_address:
+                user.consent_ip = ip_address
+        else:
+            user.consent_date = None
+            user.consent_ip = None
+        db.commit()
+        db.refresh(user)
+        return user
+    return None
+
+def has_user_consent(db: Session, telegram_id: int) -> bool:
+    """Проверяет, дал ли пользователь согласие на обработку данных"""
+    user = db.query(models.UserAccess).filter(
+        models.UserAccess.telegram_id == telegram_id
+    ).first()
+    return user and user.consent_given == 1
+
 
 # ========== ВОДИТЕЛИ ==========
 
