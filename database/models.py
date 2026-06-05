@@ -111,3 +111,20 @@ class PendingInvite(Base):
     invited_at = Column(DateTime, default=datetime.utcnow)
     status = Column(String(20), default='pending')  # pending, cancelled, completed
     cancelled_at = Column(DateTime, nullable=True)
+
+class UserAccess(Base):
+    """Таблица для управления доступом пользователей Telegram"""
+    __tablename__ = 'user_access'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    telegram_id = Column(Integer, unique=True, index=True)
+    username = Column(String(100))
+    is_admin = Column(Integer, default=0)  # 0 - обычный, 1 - админ
+    admin_password = Column(String(100), nullable=True)
+    allowed_data_types = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_active = Column(DateTime, default=datetime.utcnow)
+    
+    # Новые поля для согласия на обработку данных
+    consent_given = Column(Integer, default=0)  # 0 - нет, 1 - да
+    consent_date = Column(DateTime, nullable=True)  # дата и время согласия (UTC)
