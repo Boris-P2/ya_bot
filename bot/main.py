@@ -12,6 +12,7 @@ from shared.config import settings
 from bot.handlers import (
     start,
     help_command,
+    help_admin,
     get_recent_updates,
     get_stats,
     get_top_drivers,
@@ -24,13 +25,16 @@ from bot.handlers import (
     export_drivers,
     queue_stats,
     update_phones,
-    phone_status,          # ← Убедитесь, что функция существует в handlers.py
+    phone_status,
     auth,
     whoami,
     invite_driver,
     my_referrals,
     referral_stats,
-    help_admin,  # ← ДОБАВИТЬ
+    # Новые обработчики для кнопок
+    handle_auth_phone,
+    handle_invite_phone,
+    handle_search,
 )
 
 logging.basicConfig(
@@ -78,6 +82,10 @@ def run_bot():
     # Алиасы (без подчёркиваний)
     application.add_handler(CommandHandler("myreferrals", my_referrals))
     application.add_handler(CommandHandler("referralstats", referral_stats))
+
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_auth_phone))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invite_phone))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search))
     
     # Обработчик кнопок
     application.add_handler(CallbackQueryHandler(button_callback))
