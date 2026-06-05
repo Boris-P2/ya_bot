@@ -35,6 +35,7 @@ from bot.handlers import (
     handle_auth_phone,
     handle_invite_phone,
     handle_search,
+    revoke_consent,
 )
 
 logging.basicConfig(
@@ -86,6 +87,7 @@ def run_bot():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_auth_phone))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invite_phone))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search))
+    application.add_handler(CommandHandler("revoke_consent", revoke_consent))
     
     # Обработчик кнопок
     application.add_handler(CallbackQueryHandler(button_callback))
