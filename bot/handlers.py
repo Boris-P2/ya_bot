@@ -22,10 +22,8 @@ def get_main_keyboard(is_authorized: bool = False):
     keyboard = []
     
     if not is_authorized:
-        # Не авторизован — показываем только кнопку входа
         keyboard.append([InlineKeyboardButton("🔐 Войти по номеру телефона", callback_data="auth")])
     else:
-        # Авторизован — полное меню
         keyboard.append([
             InlineKeyboardButton("📞 Пригласить водителя", callback_data="invite"),
             InlineKeyboardButton("👥 Мои приглашения", callback_data="my_referrals")
@@ -50,15 +48,20 @@ def get_back_keyboard():
     """Клавиатура с кнопкой 'Назад'"""
     keyboard = [[InlineKeyboardButton("◀️ Назад в меню", callback_data="menu")]]
     return InlineKeyboardMarkup(keyboard)
-    
+
+
+def get_auth_button_keyboard():
+    """Клавиатура с кнопкой для входа (после согласия)"""
+    keyboard = [[InlineKeyboardButton("🔐 Войти по номеру телефона", callback_data="auth")]]
+    return InlineKeyboardMarkup(keyboard)
 
 
 # ========== ОСНОВНЫЕ КОМАНДЫ ==========
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /start - приветствие и запрос согласия"""
     user = update.effective_user
     
-    # Сохраняем пользователя (без согласия)
     db = SessionLocal()
     try:
         crud.add_or_update_user(
@@ -68,12 +71,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             is_admin=user.id in settings.ADMIN_IDS
         )
         
-        # Проверяем, есть ли согласие
         user_record = crud.get_user(db, user.id)
         has_consent = user_record and user_record.consent_given == 1
         
         if has_consent:
-            # Уже есть согласие, проверяем авторизацию
             driver = crud.get_driver_by_telegram_id(db, user.id)
             is_authorized = driver is not None
             
@@ -83,7 +84,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=get_main_keyboard(is_authorized=True)
                 )
             else:
-                # Есть согласие, но нет привязки — показываем кнопку входа
                 welcome_text = (
                     f"👋 *Привет, {user.first_name}!*\n\n"
                     f"🤝 Этот бот помогает приглашать водителей в парк Яндекс.Такси.\n\n"
@@ -102,43 +102,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=get_auth_button_keyboard()
                 )
         else:
-            # Нет согласия — запрашиваем
             await request_consent(update, context)
-            return
-            
-    finally:
-        db.close()
-
-    """Команда /start - приветствие и запрос согласия"""
-    user = update.effective_user
-    
-    # Сохраняем пользователя (без согласия)
-    db = SessionLocal()
-    try:
-        crud.add_or_update_user(
-            db,
-            telegram_id=user.id,
-            username=user.username,
-            is_admin=user.id in settings.ADMIN_IDS
-        )
-        
-        # Проверяем, есть ли согласие
-        user_record = crud.get_user(db, user.id)
-        has_consent = user_record and user_record.consent_given == 1
-        
-        if has_consent:
-            # Уже есть согласие, показываем главное меню
-            driver = crud.get_driver_by_telegram_id(db, user.id)
-            is_authorized = driver is not None
-            
-            await update.message.reply_text(
-                f"👋 С возвращением, {user.first_name}!",
-                reply_markup=get_main_keyboard(is_authorized)
-            )
-        else:
-            # Нет согласия — запрашиваем
-            await request_consent(update, context)
-            return
             
     finally:
         db.close()
@@ -169,18 +133,15 @@ async def request_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запрашивает согласие на обработку данных"""
     user = update.effective_user
     
-    # Проверяем, не давал ли пользователь уже согласие
     db = SessionLocal()
     try:
         user_record = crud.get_user(db, user.id)
         if user_record and user_record.consent_given == 1:
-            # Уже есть согласие, переходим к авторизации
             await auth_button(update, context)
             return
     finally:
         db.close()
     
-    # Клавиатура для согласия
     keyboard = [
         [
             InlineKeyboardButton("✅ Да, я согласен", callback_data="consent_yes"),
@@ -201,8 +162,8 @@ async def request_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Начисления бонусов за приглашения\n"
         "• Статистики работы парка\n\n"
         "Данные не передаются третьим лицам.\n\n"
-        f"📅 Дата и время согласия будут зафиксированы по Московскому времени.\n\n"
-        f"_Вы можете отозвать согласие в любое время через /revoke_consent_"
+        "📅 Дата и время согласия будут зафиксированы по Московскому времени.\n\n"
+        "Вы можете отозвать согласие в любое время через команду /revoke_consent"
     )
     
     await update.message.reply_text(
@@ -211,10 +172,11 @@ async def request_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
+
 # ========== АВТОРИЗАЦИЯ ==========
+
 async def auth_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка нажатия кнопки 'Войти по номеру телефона'"""
-    # Проверяем, откуда пришёл вызов (callback или прямое сообщение)
     if update.callback_query:
         query = update.callback_query
         await query.answer()
@@ -222,7 +184,6 @@ async def auth_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         message = update.message
     
-    # Проверяем согласие перед авторизацией
     user = update.effective_user
     db = SessionLocal()
     try:
@@ -239,11 +200,9 @@ async def auth_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         db.close()
     
-    # Устанавливаем состояние ожидания ввода номера телефона
     context.user_data['awaiting_auth_phone'] = True
     
-    # Обновляем сообщение (если это callback) или отправляем новое
-    text = (
+    text_msg = (
         "🔐 *Вход по номеру телефона*\n\n"
         "Пожалуйста, введите ваш номер телефона в формате:\n"
         "`+79001234567`\n\n"
@@ -252,48 +211,16 @@ async def auth_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if update.callback_query:
         await query.edit_message_text(
-            text,
+            text_msg,
             parse_mode='Markdown',
             reply_markup=get_back_keyboard()
         )
     else:
         await message.reply_text(
-            text,
+            text_msg,
             parse_mode='Markdown',
             reply_markup=get_back_keyboard()
         )
-    """Обработка нажатия кнопки 'Войти по номеру телефона'"""
-    query = update.callback_query
-    await query.answer()
-    
-    # Проверяем согласие перед авторизацией
-    user = update.effective_user
-    db = SessionLocal()
-    try:
-        user_record = crud.get_user(db, user.id)
-        has_consent = user_record and user_record.consent_given == 1
-        
-        if not has_consent:
-            await query.edit_message_text(
-                "❌ Вы не дали согласие на обработку данных.\n\n"
-                "Пожалуйста, нажмите /start и дайте согласие для продолжения.",
-                reply_markup=get_back_keyboard()
-            )
-            return
-    finally:
-        db.close()
-    
-    # Устанавливаем состояние ожидания ввода номера телефона
-    context.user_data['awaiting_auth_phone'] = True
-    
-    await query.edit_message_text(
-        "🔐 *Вход по номеру телефона*\n\n"
-        "Пожалуйста, введите ваш номер телефона в формате:\n"
-        "`+79001234567`\n\n"
-        "_Номер должен совпадать с номером, указанным в профиле Яндекс.Такси_",
-        parse_mode='Markdown',
-        reply_markup=get_back_keyboard()
-    )
 
 
 async def handle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -306,24 +233,20 @@ async def handle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "consent_yes":
         db = SessionLocal()
         try:
-            # Обновляем согласие
             crud.update_user_consent(db, user.id, True)
             
-            # Получаем запись для отображения даты
             user_record = crud.get_user(db, user.id)
             
-            # Конвертируем UTC в Московское время (UTC+3)
             moscow_time = user_record.consent_date + timedelta(hours=3) if user_record and user_record.consent_date else None
             time_str = moscow_time.strftime('%d.%m.%Y %H:%M:%S') if moscow_time else 'неизвестно'
             
-            # Показываем сообщение об успехе
             await query.edit_message_text(
                 f"✅ *Согласие получено!*\n\n"
                 f"📅 Дата и время (МСК): {time_str}\n\n"
                 f"Благодарим за доверие!\n\n"
                 f"👇 *Нажмите кнопку ниже для входа в систему* 👇",
                 parse_mode='Markdown',
-                reply_markup=get_auth_button_keyboard()  # ← НОВАЯ КЛАВИАТУРА
+                reply_markup=get_auth_button_keyboard()
             )
         finally:
             db.close()
@@ -344,76 +267,6 @@ async def handle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-async def revoke_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /revoke_consent - отзыв согласия на обработку данных"""
-    user = update.effective_user
-    
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Да, подтверждаю отзыв", callback_data="revoke_confirm"),
-            InlineKeyboardButton("❌ Нет, оставить согласие", callback_data="revoke_cancel")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        "⚠️ *Отзыв согласия на обработку данных*\n\n"
-        "Вы уверены, что хотите отозвать согласие?\n\n"
-        "После отзыва:\n"
-        "• Ваш аккаунт будет отвязан от бота\n"
-        "• Ваши реферальные приглашения станут неактивными\n"
-        "• Вы не сможете получать новые награды\n\n"
-        "_Вы можете снова дать согласие через /start в любой момент_",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
-
-
-async def handle_revoke_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка подтверждения отзыва согласия"""
-    query = update.callback_query
-    await query.answer()
-    
-    user = update.effective_user
-    
-    if query.data == "revoke_confirm":
-        db = SessionLocal()
-        try:
-            # Обновляем согласие
-            crud.update_user_consent(db, user.id, False)
-            
-            # Отвязываем Telegram ID от водителя
-            driver = crud.get_driver_by_telegram_id(db, user.id)
-            if driver:
-                driver.telegram_id = None
-                db.commit()
-            
-            await query.edit_message_text(
-                "✅ *Согласие отозвано.*\n\n"
-                "Ваши данные были отвязаны от бота.\n\n"
-                "Если вы захотите снова пользоваться ботом, нажмите /start и дайте новое согласие.",
-                parse_mode='Markdown'
-            )
-        finally:
-            db.close()
-    else:
-        await query.edit_message_text(
-            "Операция отменена. Ваше согласие на обработку данных остаётся в силе.",
-            parse_mode='Markdown'
-        )
-
-
-async def check_consent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Проверяет, есть ли у пользователя согласие (вспомогательная функция)"""
-    user = update.effective_user
-    db = SessionLocal()
-    try:
-        user_record = crud.get_user(db, user.id)
-        has_consent = user_record and user_record.consent_given == 1
-        return has_consent
-    finally:
-        db.close()
-
 async def handle_auth_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ввода номера телефона для авторизации"""
     if not context.user_data.get('awaiting_auth_phone'):
@@ -421,8 +274,6 @@ async def handle_auth_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user = update.effective_user
     phone = update.message.text.strip()
-    
-    # Нормализуем номер
     phone_clean = phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
     
     db = SessionLocal()
@@ -440,7 +291,6 @@ async def handle_auth_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # Проверяем, не привязан ли уже этот аккаунт
         existing = crud.get_driver_by_telegram_id(db, user.id)
         if existing and existing.driver_id != driver.driver_id:
             await update.message.reply_text(
@@ -450,11 +300,9 @@ async def handle_auth_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # Привязываем Telegram ID
         driver.telegram_id = user.id
         db.commit()
         
-        # Очищаем состояние
         context.user_data.pop('awaiting_auth_phone', None)
         
         await update.message.reply_text(
@@ -492,7 +340,6 @@ async def invite_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # Устанавливаем состояние ожидания ввода номера для приглашения
         context.user_data['awaiting_invite_phone'] = True
         
         await query.edit_message_text(
@@ -531,7 +378,6 @@ async def handle_invite_phone(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.user_data.pop('awaiting_invite_phone', None)
             return
         
-        # Проверяем, не приглашает ли себя
         if driver.phone == target_phone_clean:
             await update.message.reply_text(
                 "❌ Нельзя пригласить самого себя",
@@ -540,7 +386,6 @@ async def handle_invite_phone(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.user_data.pop('awaiting_invite_phone', None)
             return
         
-        # Проверяем лимит ожидающих приглашений
         pending_count = crud.count_pending_invites(db, driver.driver_id)
         if pending_count >= 3:
             await update.message.reply_text(
@@ -552,31 +397,28 @@ async def handle_invite_phone(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.user_data.pop('awaiting_invite_phone', None)
             return
         
-        # Проверяем дату регистрации (если водитель уже в базе)
         referred = crud.get_driver_by_phone(db, target_phone_clean)
-        if referred:
-            if referred.created_date:
-                try:
-                    if 'T' in referred.created_date:
-                        created_date_str = referred.created_date.split('T')[0]
-                    else:
-                        created_date_str = referred.created_date[:10]
-                    
-                    created_date = datetime.strptime(created_date_str, '%Y-%m-%d')
-                    days_ago = (datetime.utcnow() - created_date).days
-                    
-                    if days_ago >= 3:
-                        await update.message.reply_text(
-                            f"❌ Водитель {referred.last_name or 'Без имени'} зарегистрирован {days_ago} дней назад.\n\n"
-                            f"Приглашать можно только водителей, зарегистрированных в течение последних 3 дней.",
-                            reply_markup=get_back_keyboard()
-                        )
-                        context.user_data.pop('awaiting_invite_phone', None)
-                        return
-                except Exception as e:
-                    logger.error(f"Error parsing created_date: {e}")
+        if referred and referred.created_date:
+            try:
+                if 'T' in referred.created_date:
+                    created_date_str = referred.created_date.split('T')[0]
+                else:
+                    created_date_str = referred.created_date[:10]
+                
+                created_date = datetime.strptime(created_date_str, '%Y-%m-%d')
+                days_ago = (datetime.utcnow() - created_date).days
+                
+                if days_ago >= 3:
+                    await update.message.reply_text(
+                        f"❌ Водитель {referred.last_name or 'Без имени'} зарегистрирован {days_ago} дней назад.\n\n"
+                        f"Приглашать можно только водителей, зарегистрированных в течение последних 3 дней.",
+                        reply_markup=get_back_keyboard()
+                    )
+                    context.user_data.pop('awaiting_invite_phone', None)
+                    return
+            except Exception as e:
+                logger.error(f"Error parsing created_date: {e}")
         
-        # Создаём приглашение
         referral = crud.create_referral(db, driver.driver_id, target_phone_clean)
         
         if referral:
@@ -590,7 +432,6 @@ async def handle_invite_phone(update: Update, context: ContextTypes.DEFAULT_TYPE
                 reply_markup=get_main_keyboard(is_authorized=True)
             )
         else:
-            # Проверяем, существует ли уже приглашение
             existing = db.query(models.Referral).filter(
                 models.Referral.referrer_id == driver.driver_id,
                 models.Referral.referred_phone == target_phone_clean
@@ -642,7 +483,6 @@ async def my_referrals_button(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
             return
         
-        # Получаем приглашения
         referrals = crud.get_referrals_by_driver(db, driver.driver_id)
         pending_invites = crud.get_pending_invites_by_referrer(db, driver.driver_id)
         
@@ -658,7 +498,6 @@ async def my_referrals_button(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         response = "📋 *Ваши приглашения*\n\n"
         
-        # Обычные приглашения
         for ref in referrals[:10]:
             referred = crud.get_driver(db, ref.referred_id) if ref.referred_id else None
             referred_name = referred.last_name if referred else ref.referred_phone
@@ -677,7 +516,6 @@ async def my_referrals_button(update: Update, context: ContextTypes.DEFAULT_TYPE
             
             response += f"{status_emoji} {referred_name} — {status_text}\n"
         
-        # Ожидающие приглашения
         for invite in pending_invites:
             days_left = max(0, 7 - (datetime.utcnow() - invite.invited_at).days)
             response += f"⏳ {invite.phone} — ожидает регистрации ({days_left} дн.)\n"
@@ -834,15 +672,15 @@ async def handle_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('awaiting_search'):
         return
     
-    query = update.message.text.strip()
+    query_text = update.message.text.strip()
     
     db = SessionLocal()
     try:
-        drivers = crud.search_drivers(db, query)
+        drivers = crud.search_drivers(db, query_text)
         
         if not drivers:
             await update.message.reply_text(
-                f"❌ Водители по запросу '{query}' не найдены",
+                f"❌ Водители по запросу '{query_text}' не найдены",
                 reply_markup=get_back_keyboard()
             )
             context.user_data.pop('awaiting_search', None)
@@ -1075,15 +913,15 @@ async def search_driver(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    query = ' '.join(context.args)
-    await update.message.reply_text(f"🔍 Ищу: {query}...")
+    query_text = ' '.join(context.args)
+    await update.message.reply_text(f"🔍 Ищу: {query_text}...")
     
     db = SessionLocal()
     try:
-        drivers = crud.search_drivers(db, query)
+        drivers = crud.search_drivers(db, query_text)
         
         if not drivers:
-            await update.message.reply_text(f"Водители по запросу '{query}' не найдены")
+            await update.message.reply_text(f"Водители по запросу '{query_text}' не найдены")
             return
         
         response = f"🔍 *Результаты поиска:*\n\n"
@@ -1487,16 +1325,18 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ========== ОБРАБОТЧИК КНОПОК ==========
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка всех нажатий на кнопки"""
     query = update.callback_query
     await query.answer()
+    
     if query.data == "menu":
         await menu(update, context)
     elif query.data == "auth":
         await auth_button(update, context)
     elif query.data == "register":
-        await auth_button(update, context)  # алиас для auth
+        await auth_button(update, context)
     elif query.data == "consent_yes":
         await handle_consent(update, context)
     elif query.data == "consent_no":
@@ -1521,3 +1361,62 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await help_button(update, context)
     elif query.data == "logout":
         await logout(update, context)
+
+
+# ========== ОТЗЫВ СОГЛАСИЯ ==========
+
+async def revoke_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /revoke_consent - отзыв согласия на обработку данных"""
+    user = update.effective_user
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Да, подтверждаю отзыв", callback_data="revoke_confirm"),
+            InlineKeyboardButton("❌ Нет, оставить согласие", callback_data="revoke_cancel")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "⚠️ *Отзыв согласия на обработку данных*\n\n"
+        "Вы уверены, что хотите отозвать согласие?\n\n"
+        "После отзыва:\n"
+        "• Ваш аккаунт будет отвязан от бота\n"
+        "• Ваши реферальные приглашения станут неактивными\n"
+        "• Вы не сможете получать новые награды\n\n"
+        "_Вы можете снова дать согласие через /start в любой момент_",
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+
+
+async def handle_revoke_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка подтверждения отзыва согласия"""
+    query = update.callback_query
+    await query.answer()
+    
+    user = update.effective_user
+    
+    if query.data == "revoke_confirm":
+        db = SessionLocal()
+        try:
+            crud.update_user_consent(db, user.id, False)
+            
+            driver = crud.get_driver_by_telegram_id(db, user.id)
+            if driver:
+                driver.telegram_id = None
+                db.commit()
+            
+            await query.edit_message_text(
+                "✅ *Согласие отозвано.*\n\n"
+                "Ваши данные были отвязаны от бота.\n\n"
+                "Если вы захотите снова пользоваться ботом, нажмите /start и дайте новое согласие.",
+                parse_mode='Markdown'
+            )
+        finally:
+            db.close()
+    else:
+        await query.edit_message_text(
+            "Операция отменена. Ваше согласие на обработку данных остаётся в силе.",
+            parse_mode='Markdown'
+        )
