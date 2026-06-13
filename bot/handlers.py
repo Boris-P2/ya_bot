@@ -1491,45 +1491,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка всех нажатий на кнопки"""
     query = update.callback_query
     await query.answer()
-    
     if query.data == "menu":
         await menu(update, context)
     elif query.data == "auth":
         await auth_button(update, context)
     elif query.data == "register":
         await auth_button(update, context)  # алиас для auth
-    elif query.data == "consent_yes":
-        await handle_consent(update, context)
-    elif query.data == "consent_no":
-        await handle_consent(update, context)
-    elif query.data == "revoke_confirm":
-        await handle_revoke_consent(update, context)
-    elif query.data == "revoke_cancel":
-        await handle_revoke_consent(update, context)
-    elif query.data == "invite":
-        await invite_button(update, context)
-    elif query.data == "my_referrals":
-        await my_referrals_button(update, context)
-    elif query.data == "referral_stats":
-        await referral_stats_button(update, context)
-    elif query.data == "stats":
-        await stats_button(update, context)
-    elif query.data == "top":
-        await top_button(update, context)
-    elif query.data == "search":
-        await search_button(update, context)
-    elif query.data == "help":
-        await help_button(update, context)
-    elif query.data == "logout":
-        await logout(update, context)
-    """Обработка всех нажатий на кнопки"""
-      query = update.callback_query
-    await query.answer()
-    
-    if query.data == "menu":
-        await menu(update, context)
-    elif query.data == "auth":
-        await auth_button(update, context)
     elif query.data == "consent_yes":
         await handle_consent(update, context)
     elif query.data == "consent_no":
