@@ -50,10 +50,65 @@ def get_back_keyboard():
     """Клавиатура с кнопкой 'Назад'"""
     keyboard = [[InlineKeyboardButton("◀️ Назад в меню", callback_data="menu")]]
     return InlineKeyboardMarkup(keyboard)
+    
 
 
 # ========== ОСНОВНЫЕ КОМАНДЫ ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /start - приветствие и запрос согласия"""
+    user = update.effective_user
+    
+    # Сохраняем пользователя (без согласия)
+    db = SessionLocal()
+    try:
+        crud.add_or_update_user(
+            db,
+            telegram_id=user.id,
+            username=user.username,
+            is_admin=user.id in settings.ADMIN_IDS
+        )
+        
+        # Проверяем, есть ли согласие
+        user_record = crud.get_user(db, user.id)
+        has_consent = user_record and user_record.consent_given == 1
+        
+        if has_consent:
+            # Уже есть согласие, проверяем авторизацию
+            driver = crud.get_driver_by_telegram_id(db, user.id)
+            is_authorized = driver is not None
+            
+            if is_authorized:
+                await update.message.reply_text(
+                    f"👋 С возвращением, {user.first_name}!",
+                    reply_markup=get_main_keyboard(is_authorized=True)
+                )
+            else:
+                # Есть согласие, но нет привязки — показываем кнопку входа
+                welcome_text = (
+                    f"👋 *Привет, {user.first_name}!*\n\n"
+                    f"🤝 Этот бот помогает приглашать водителей в парк Яндекс.Такси.\n\n"
+                    f"💰 *Как это работает:*\n"
+                    f"• Вы приглашаете водителя по номеру телефона\n"
+                    f"• Когда приглашённый водитель выполнит 100 заказов\n"
+                    f"• Вы получаете бонусное вознаграждение!\n\n"
+                    f"📱 *Для начала работы:*\n"
+                    f"• Нажмите кнопку «Войти по номеру телефона»\n"
+                    f"• Введите ваш номер телефона\n\n"
+                    f"_Приглашайте водителей и зарабатывайте бонусы!_"
+                )
+                await update.message.reply_text(
+                    welcome_text,
+                    parse_mode='Markdown',
+                    reply_markup=get_auth_button_keyboard()
+                )
+        else:
+            # Нет согласия — запрашиваем
+            await request_consent(update, context)
+            return
+            
+    finally:
+        db.close()
+
     """Команда /start - приветствие и запрос согласия"""
     user = update.effective_user
     
@@ -159,6 +214,55 @@ async def request_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========== АВТОРИЗАЦИЯ ==========
 async def auth_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка нажатия кнопки 'Войти по номеру телефона'"""
+    # Проверяем, откуда пришёл вызов (callback или прямое сообщение)
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        message = query.message
+    else:
+        message = update.message
+    
+    # Проверяем согласие перед авторизацией
+    user = update.effective_user
+    db = SessionLocal()
+    try:
+        user_record = crud.get_user(db, user.id)
+        has_consent = user_record and user_record.consent_given == 1
+        
+        if not has_consent:
+            await message.reply_text(
+                "❌ Вы не дали согласие на обработку данных.\n\n"
+                "Пожалуйста, нажмите /start и дайте согласие для продолжения.",
+                reply_markup=get_back_keyboard()
+            )
+            return
+    finally:
+        db.close()
+    
+    # Устанавливаем состояние ожидания ввода номера телефона
+    context.user_data['awaiting_auth_phone'] = True
+    
+    # Обновляем сообщение (если это callback) или отправляем новое
+    text = (
+        "🔐 *Вход по номеру телефона*\n\n"
+        "Пожалуйста, введите ваш номер телефона в формате:\n"
+        "`+79001234567`\n\n"
+        "_Номер должен совпадать с номером, указанным в профиле Яндекс.Такси_"
+    )
+    
+    if update.callback_query:
+        await query.edit_message_text(
+            text,
+            parse_mode='Markdown',
+            reply_markup=get_back_keyboard()
+        )
+    else:
+        await message.reply_text(
+            text,
+            parse_mode='Markdown',
+            reply_markup=get_back_keyboard()
+        )
+    """Обработка нажатия кнопки 'Войти по номеру телефона'"""
     query = update.callback_query
     await query.answer()
     
@@ -200,16 +304,10 @@ async def handle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     
     if query.data == "consent_yes":
-        # Получаем IP пользователя (если доступно)
-        ip_address = None
-        if update.effective_message and update.effective_message.chat:
-            # Пример получения IP (зависит от вашего окружения)
-            pass
-        
         db = SessionLocal()
         try:
             # Обновляем согласие
-            crud.update_user_consent(db, user.id, True, ip_address)
+            crud.update_user_consent(db, user.id, True)
             
             # Получаем запись для отображения даты
             user_record = crud.get_user(db, user.id)
@@ -218,24 +316,21 @@ async def handle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
             moscow_time = user_record.consent_date + timedelta(hours=3) if user_record and user_record.consent_date else None
             time_str = moscow_time.strftime('%d.%m.%Y %H:%M:%S') if moscow_time else 'неизвестно'
             
+            # Показываем сообщение об успехе
             await query.edit_message_text(
                 f"✅ *Согласие получено!*\n\n"
-                f"Дата и время (МСК): {time_str}\n\n"
-                f"Благодарим за доверие! Теперь вы можете продолжить регистрацию.\n\n"
-                f"Нажмите кнопку «Войти по номеру телефона» для продолжения.",
+                f"📅 Дата и время (МСК): {time_str}\n\n"
+                f"Благодарим за доверие!\n\n"
+                f"👇 *Нажмите кнопку ниже для входа в систему* 👇",
                 parse_mode='Markdown',
-                reply_markup=get_back_keyboard()
+                reply_markup=get_auth_button_keyboard()  # ← НОВАЯ КЛАВИАТУРА
             )
         finally:
             db.close()
         
-        # Показываем кнопку входа
-        await auth_button(update, context)
-        
     elif query.data == "consent_no":
         db = SessionLocal()
         try:
-            # Записываем отказ
             crud.update_user_consent(db, user.id, False)
         finally:
             db.close()
@@ -1392,8 +1487,41 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ========== ОБРАБОТЧИК КНОПОК ==========
-
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка всех нажатий на кнопки"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "menu":
+        await menu(update, context)
+    elif query.data == "auth":
+        await auth_button(update, context)
+    elif query.data == "register":
+        await auth_button(update, context)  # алиас для auth
+    elif query.data == "consent_yes":
+        await handle_consent(update, context)
+    elif query.data == "consent_no":
+        await handle_consent(update, context)
+    elif query.data == "revoke_confirm":
+        await handle_revoke_consent(update, context)
+    elif query.data == "revoke_cancel":
+        await handle_revoke_consent(update, context)
+    elif query.data == "invite":
+        await invite_button(update, context)
+    elif query.data == "my_referrals":
+        await my_referrals_button(update, context)
+    elif query.data == "referral_stats":
+        await referral_stats_button(update, context)
+    elif query.data == "stats":
+        await stats_button(update, context)
+    elif query.data == "top":
+        await top_button(update, context)
+    elif query.data == "search":
+        await search_button(update, context)
+    elif query.data == "help":
+        await help_button(update, context)
+    elif query.data == "logout":
+        await logout(update, context)
     """Обработка всех нажатий на кнопки"""
       query = update.callback_query
     await query.answer()
