@@ -94,7 +94,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"📱 *Для начала работы:*\n"
                     f"• Нажмите кнопку «Войти по номеру телефона»\n"
                     f"• Введите ваш номер телефона\n\n"
-                    f"_Приглашайте водителей и зарабатывайте бонусы!_"
+                    f"Приглашайте водителей и зарабатывайте бонусы!"
                 )
                 await update.message.reply_text(
                     welcome_text,
@@ -206,7 +206,7 @@ async def auth_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔐 *Вход по номеру телефона*\n\n"
         "Пожалуйста, введите ваш номер телефона в формате:\n"
         "`+79001234567`\n\n"
-        "_Номер должен совпадать с номером, указанным в профиле Яндекс.Такси_"
+        "Номер должен совпадать с номером, указанным в профиле Яндекс.Такси"
     )
     
     if update.callback_query:
@@ -569,7 +569,7 @@ async def referral_stats_button(update: Update, context: ContextTypes.DEFAULT_TY
             f"📞 Ожидают регистрации: {pending_invites}\n\n"
             f"🎁 Награда ожидает выдачи: {stats['pending']} бонусов\n"
             f"🏆 Получено наград: {stats['total']} бонусов\n\n"
-            f"_Приглашайте новых водителей и получайте бонусы!_"
+            f"Приглашайте новых водителей и получайте бонусы!"
         )
         
         await query.edit_message_text(
@@ -1095,8 +1095,8 @@ async def queue_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⭐ Высокий приоритет (новые): {stats['high_priority']}\n"
             f"📊 Обычный приоритет: {stats['low_priority']}\n"
             f"⏱️ Среднее время ожидания: {stats['avg_wait_hours']} часов\n\n"
-            f"_Обновление происходит по принципу FIFO:_\n"
-            f"_сначала обновляются водители, которые дольше всех ждали_"
+            f"Обновление происходит по принципу FIFO:\n"
+            f"сначала обновляются водители, которые дольше всех ждали"
         )
         
         await update.message.reply_text(response, parse_mode='Markdown')
@@ -1269,7 +1269,7 @@ async def update_phones(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ Обновление завершено!\n\n"
                 f"📞 Обновлено: {result['updated']}\n"
                 f"❌ Ошибок: {len(result['errors'])}\n\n"
-                f"_Следующее автоматическое обновление через 6 часов_",
+                f"Следующее автоматическое обновление через 6 часов",
                 parse_mode='Markdown'
             )
         except Exception as e:
@@ -1306,7 +1306,7 @@ async def phone_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ Без телефонов: {without_phone}\n"
             f"📈 Прогресс: {round(with_phone/total*100, 1)}%\n"
             f"🕐 Последнее обновление: {last_time}\n\n"
-            f"_Автоматическое обновление: каждые 6 часов_",
+            f"Автоматическое обновление: каждые 6 часов",
             parse_mode='Markdown'
         )
     finally:
@@ -1384,7 +1384,7 @@ async def revoke_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Ваш аккаунт будет отвязан от бота\n"
         "• Ваши реферальные приглашения станут неактивными\n"
         "• Вы не сможете получать новые награды\n\n"
-        "_Вы можете снова дать согласие через /start в любой момент_",
+        "Вы можете снова дать согласие через /start в любой момент",
         parse_mode='Markdown',
         reply_markup=reply_markup
     )
