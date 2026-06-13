@@ -26,12 +26,8 @@ from bot.handlers import (
     queue_stats,
     update_phones,
     phone_status,
-    auth,
-    whoami,
-    invite_driver,
-    my_referrals,
-    referral_stats,
-    # Новые обработчики для кнопок
+    # Удалены старые auth, whoami, invite_driver, my_referrals, referral_stats
+    # Вместо них используются кнопки
     handle_auth_phone,
     handle_invite_phone,
     handle_search,
@@ -60,7 +56,7 @@ def run_bot():
     # Регистрируем команды
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("help_admin", help_admin))  # ← ДОБАВИТЬ
+    application.add_handler(CommandHandler("help_admin", help_admin))
     application.add_handler(CommandHandler("stats", get_stats))
     application.add_handler(CommandHandler("top", get_top_drivers))
     application.add_handler(CommandHandler("search", search_driver))
@@ -72,25 +68,15 @@ def run_bot():
     application.add_handler(CommandHandler("queue", queue_stats))
     application.add_handler(CommandHandler("update_phones", update_phones))
     application.add_handler(CommandHandler("phonestatus", phone_status))
-    
-    # РЕФЕРАЛЬНЫЕ КОМАНДЫ
-    application.add_handler(CommandHandler("auth", auth))
-    application.add_handler(CommandHandler("whoami", whoami))
-    application.add_handler(CommandHandler("invite", invite_driver))
-    application.add_handler(CommandHandler("my_referrals", my_referrals))
-    application.add_handler(CommandHandler("referral_stats", referral_stats))
-
-    # Алиасы (без подчёркиваний)
-    application.add_handler(CommandHandler("myreferrals", my_referrals))
-    application.add_handler(CommandHandler("referralstats", referral_stats))
-
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_auth_phone))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invite_phone))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search))
     application.add_handler(CommandHandler("revoke_consent", revoke_consent))
     
     # Обработчик кнопок
     application.add_handler(CallbackQueryHandler(button_callback))
+    
+    # Обработчики для ввода текста (для кнопок)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_auth_phone))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invite_phone))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search))
     
     # Обработчик неизвестных команд
     application.add_handler(MessageHandler(filters.COMMAND, unknown))
