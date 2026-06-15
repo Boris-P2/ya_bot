@@ -98,7 +98,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 await update.message.reply_text(
                     welcome_text,
-                    parse_mode='Markdown',
+                    parse_mode=None,
                     reply_markup=get_auth_button_keyboard()
                 )
         else:
