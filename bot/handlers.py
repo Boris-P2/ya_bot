@@ -30,14 +30,9 @@ def get_main_keyboard(is_authorized: bool = False):
         ])
         keyboard.append([
             InlineKeyboardButton("💰 Статус наград", callback_data="referral_stats"),
-            InlineKeyboardButton("📊 Статистика", callback_data="stats")
+            InlineKeyboardButton("❓ Помощь", callback_data="help")
         ])
         keyboard.append([
-            InlineKeyboardButton("🏆 Топ водителей", callback_data="top"),
-            InlineKeyboardButton("🔍 Поиск", callback_data="search")
-        ])
-        keyboard.append([
-            InlineKeyboardButton("❓ Помощь", callback_data="help"),
             InlineKeyboardButton("🚪 Выйти", callback_data="logout")
         ])
     
