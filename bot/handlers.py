@@ -85,13 +85,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             else:
                 welcome_text = (
-                    f"👋 *Привет, {user.first_name}!*\n\n"
+                    f"👋 Привет, {user.first_name}!\n\n"
                     f"🤝 Этот бот помогает приглашать водителей в парк Яндекс.Такси.\n\n"
-                    f"💰 *Как это работает:*\n"
+                    f"💰 Как это работает:\n"
                     f"• Вы приглашаете водителя по номеру телефона\n"
                     f"• Когда приглашённый водитель выполнит 100 заказов\n"
                     f"• Вы получаете бонусное вознаграждение!\n\n"
-                    f"📱 *Для начала работы:*\n"
+                    f"📱 Для начала работы:\n"
                     f"• Нажмите кнопку «Войти по номеру телефона»\n"
                     f"• Введите ваш номер телефона\n\n"
                     f"Приглашайте водителей и зарабатывайте бонусы!"
@@ -123,8 +123,8 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.close()
     
     await query.edit_message_text(
-        "📋 *Главное меню*\n\nВыберите действие:",
-        parse_mode='Markdown',
+        "📋 Главное меню\n\nВыберите действие:",
+        parse_mode=None,
         reply_markup=get_main_keyboard(is_authorized)
     )
 
@@ -151,16 +151,16 @@ async def request_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     consent_text = (
-        "🔐 *Согласие на обработку персональных данных*\n\n"
+        "🔐 СОГЛАСИЕ НА ОБРАБОТКУ ПЕРСОНАЛЬНЫХ ДАННЫХ\n\n"
         "Для продолжения работы с ботом необходимо дать согласие на обработку следующих данных:\n"
-        "• Номер телефона\n"
-        "• ID водителя в системе Яндекс.Такси\n"
-        "• Информация о количестве выполненных заказов\n"
-        "• Статус работы водителя\n\n"
+        "- Номер телефона\n"
+        "- ID водителя в системе Яндекс.Такси\n"
+        "- Информация о количестве выполненных заказов\n"
+        "- Статус работы водителя\n\n"
         "Ваши данные используются только для:\n"
-        "• Отслеживания реферальных приглашений\n"
-        "• Начисления бонусов за приглашения\n"
-        "• Статистики работы парка\n\n"
+        "- Отслеживания реферальных приглашений\n"
+        "- Начисления бонусов за приглашения\n"
+        "- Статистики работы парка\n\n"
         "Данные не передаются третьим лицам.\n\n"
         "📅 Дата и время согласия будут зафиксированы по Московскому времени.\n\n"
         "Вы можете отозвать согласие в любое время через команду /revoke_consent"
@@ -168,7 +168,7 @@ async def request_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         consent_text,
-        parse_mode='Markdown',
+        parse_mode=None,
         reply_markup=reply_markup
     )
 
@@ -203,22 +203,22 @@ async def auth_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['awaiting_auth_phone'] = True
     
     text_msg = (
-        "🔐 *Вход по номеру телефона*\n\n"
+        "🔐 Вход по номеру телефона\n\n"
         "Пожалуйста, введите ваш номер телефона в формате:\n"
-        "`+79001234567`\n\n"
+        "+79001234567\n\n"
         "Номер должен совпадать с номером, указанным в профиле Яндекс.Такси"
     )
     
     if update.callback_query:
         await query.edit_message_text(
             text_msg,
-            parse_mode='Markdown',
+            parse_mode=None,
             reply_markup=get_back_keyboard()
         )
     else:
         await message.reply_text(
             text_msg,
-            parse_mode='Markdown',
+            parse_mode=None,
             reply_markup=get_back_keyboard()
         )
 
@@ -241,11 +241,11 @@ async def handle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
             time_str = moscow_time.strftime('%d.%m.%Y %H:%M:%S') if moscow_time else 'неизвестно'
             
             await query.edit_message_text(
-                f"✅ *Согласие получено!*\n\n"
+                f"✅ СОГЛАСИЕ ПОЛУЧЕНО!\n\n"
                 f"📅 Дата и время (МСК): {time_str}\n\n"
                 f"Благодарим за доверие!\n\n"
-                f"👇 *Нажмите кнопку ниже для входа в систему* 👇",
-                parse_mode='Markdown',
+                f"👇 Нажмите кнопку ниже для входа в систему 👇",
+                parse_mode=None,
                 reply_markup=get_auth_button_keyboard()
             )
         finally:
@@ -259,10 +259,10 @@ async def handle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
             db.close()
         
         await query.edit_message_text(
-            "❌ *Вы отказались от обработки данных.*\n\n"
+            "❌ ВЫ ОТКАЗАЛИСЬ ОТ ОБРАБОТКИ ДАННЫХ.\n\n"
             "К сожалению, без вашего согласия мы не можем предоставить вам доступ к функциям бота.\n\n"
             "Если вы передумаете, нажмите /start и дайте согласие.",
-            parse_mode='Markdown'
+            parse_mode=None
         )
         return
 
@@ -306,12 +306,12 @@ async def handle_auth_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop('awaiting_auth_phone', None)
         
         await update.message.reply_text(
-            f"✅ *Аккаунт привязан!*\n\n"
+            f"✅ АККАУНТ ПРИВЯЗАН!\n\n"
             f"👤 Водитель: {driver.last_name or 'Без имени'}\n"
             f"📞 Телефон: {driver.phone}\n"
             f"📦 Заказов: {driver.orders_count}\n\n"
             f"Теперь вам доступны все функции бота!",
-            parse_mode='Markdown',
+            parse_mode=None,
             reply_markup=get_main_keyboard(is_authorized=True)
         )
         
@@ -343,12 +343,12 @@ async def invite_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['awaiting_invite_phone'] = True
         
         await query.edit_message_text(
-            "📞 *Пригласить водителя*\n\n"
+            "📞 ПРИГЛАСИТЬ ВОДИТЕЛЯ\n\n"
             "Введите номер телефона водителя, которого хотите пригласить:\n"
-            "`+79001234567`\n\n"
-            "_Приглашать можно только водителей, зарегистрированных в течение последних 3 дней_\n\n"
+            "+79001234567\n\n"
+            "Приглашать можно только водителей, зарегистрированных в течение последних 3 дней\n\n"
             "⚠️ Лимит: не более 3 одновременных ожидающих приглашений",
-            parse_mode='Markdown',
+            parse_mode=None,
             reply_markup=get_back_keyboard()
         )
         
@@ -424,11 +424,11 @@ async def handle_invite_phone(update: Update, context: ContextTypes.DEFAULT_TYPE
         if referral:
             remaining_orders = max(0, 100 - (referred.orders_count if referred else 0))
             await update.message.reply_text(
-                f"✅ *Приглашение отправлено!*\n\n"
+                f"✅ ПРИГЛАШЕНИЕ ОТПРАВЛЕНО!\n\n"
                 f"📞 Номер: {target_phone}\n"
                 f"🎯 Осталось заказов до награды: {remaining_orders}\n\n"
-                f"_Когда водитель выполнит условие, вы получите уведомление_",
-                parse_mode='Markdown',
+                f"Когда водитель выполнит условие, вы получите уведомление",
+                parse_mode=None,
                 reply_markup=get_main_keyboard(is_authorized=True)
             )
         else:
@@ -488,15 +488,15 @@ async def my_referrals_button(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         if not referrals and not pending_invites:
             await query.edit_message_text(
-                "📋 *Ваши приглашения*\n\n"
+                "📋 ВАШИ ПРИГЛАШЕНИЯ\n\n"
                 "У вас пока нет приглашений.\n\n"
                 "Нажмите «Пригласить водителя», чтобы начать!",
-                parse_mode='Markdown',
+                parse_mode=None,
                 reply_markup=get_back_keyboard()
             )
             return
         
-        response = "📋 *Ваши приглашения*\n\n"
+        response = "📋 ВАШИ ПРИГЛАШЕНИЯ\n\n"
         
         for ref in referrals[:10]:
             referred = crud.get_driver(db, ref.referred_id) if ref.referred_id else None
@@ -521,11 +521,11 @@ async def my_referrals_button(update: Update, context: ContextTypes.DEFAULT_TYPE
             response += f"⏳ {invite.phone} — ожидает регистрации ({days_left} дн.)\n"
         
         if len(referrals) > 10:
-            response += f"\n*... и еще {len(referrals) - 10} приглашений*"
+            response += f"\n... и еще {len(referrals) - 10} приглашений"
         
         await query.edit_message_text(
             response,
-            parse_mode='Markdown',
+            parse_mode=None,
             reply_markup=get_back_keyboard()
         )
         
@@ -562,7 +562,7 @@ async def referral_stats_button(update: Update, context: ContextTypes.DEFAULT_TY
         pending_invites = crud.count_pending_invites(db, driver.driver_id)
         
         response = (
-            f"💰 *Ваша реферальная статистика*\n\n"
+            f"💰 ВАША РЕФЕРАЛЬНАЯ СТАТИСТИКА\n\n"
             f"👥 Приглашено водителей: {completed + pending}\n"
             f"✅ Выполнили 100+ заказов: {completed}\n"
             f"⏳ Ожидают выполнения: {pending}\n"
@@ -574,7 +574,7 @@ async def referral_stats_button(update: Update, context: ContextTypes.DEFAULT_TY
         
         await query.edit_message_text(
             response,
-            parse_mode='Markdown',
+            parse_mode=None,
             reply_markup=get_back_keyboard()
         )
         
@@ -594,7 +594,7 @@ async def stats_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stats = crud.get_driver_statistics(db)
         
         response = (
-            f"📈 *Статистика парка*\n\n"
+            f"📈 СТАТИСТИКА ПАРКА\n\n"
             f"👥 Всего водителей: {stats['total']}\n"
             f"🟢 Работают: {stats['working']}\n"
             f"🟡 Не работают: {stats['not_working']}\n"
@@ -605,7 +605,7 @@ async def stats_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await query.edit_message_text(
             response,
-            parse_mode='Markdown',
+            parse_mode=None,
             reply_markup=get_back_keyboard()
         )
         
@@ -635,14 +635,14 @@ async def top_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        response = "🏆 *Топ-10 водителей по заказам:*\n\n"
+        response = "🏆 ТОП-10 ВОДИТЕЛЕЙ ПО ЗАКАЗАМ\n\n"
         for i, driver in enumerate(drivers, 1):
             response += f"{i}. {driver.last_name or 'Водитель'}\n"
             response += f"   📦 {driver.orders_count} заказов\n\n"
         
         await query.edit_message_text(
             response,
-            parse_mode='Markdown',
+            parse_mode=None,
             reply_markup=get_back_keyboard()
         )
         
@@ -660,9 +660,9 @@ async def search_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['awaiting_search'] = True
     
     await query.edit_message_text(
-        "🔍 *Поиск водителя*\n\n"
+        "🔍 ПОИСК ВОДИТЕЛЯ\n\n"
         "Введите фамилию или ID водителя для поиска:",
-        parse_mode='Markdown',
+        parse_mode=None,
         reply_markup=get_back_keyboard()
     )
 
@@ -686,17 +686,17 @@ async def handle_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop('awaiting_search', None)
             return
         
-        response = f"🔍 *Результаты поиска:*\n\n"
+        response = f"🔍 РЕЗУЛЬТАТЫ ПОИСКА\n\n"
         for driver in drivers[:10]:
             response += f"👤 {driver.last_name or 'Без имени'}\n"
-            response += f"   🆔 ID: `{driver.driver_id[:12]}...`\n"
+            response += f"   🆔 ID: {driver.driver_id[:12]}...\n"
             response += f"   📦 Заказов: {driver.orders_count}\n"
             status_emoji = "🟢" if driver.work_status == "working" else "🟡" if driver.work_status == "not_working" else "🔴"
             response += f"   {status_emoji} Статус: {driver.work_status}\n\n"
         
         await update.message.reply_text(
             response[:4096],
-            parse_mode='Markdown',
+            parse_mode=None,
             reply_markup=get_back_keyboard()
         )
         
@@ -724,10 +724,10 @@ async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE):
             db.commit()
         
         await query.edit_message_text(
-            "👋 *До свидания!*\n\n"
+            "👋 ДО СВИДАНИЯ!\n\n"
             "Вы вышли из аккаунта.\n\n"
             "Чтобы снова пользоваться ботом, нажмите кнопку «Войти по номеру телефона»",
-            parse_mode='Markdown',
+            parse_mode=None,
             reply_markup=get_main_keyboard(is_authorized=False)
         )
         
@@ -743,30 +743,30 @@ async def help_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     help_text = """
-❓ *Как пользоваться ботом*
+❓ КАК ПОЛЬЗОВАТЬСЯ БОТОМ
 
-1️⃣ *Вход в систему*
+1️⃣ Вход в систему
    • Нажмите «Войти по номеру телефона»
    • Введите ваш номер в формате +79001234567
 
-2️⃣ *Приглашение водителей*
+2️⃣ Приглашение водителей
    • Нажмите «Пригласить водителя»
    • Введите номер телефона приглашаемого
 
-3️⃣ *Отслеживание прогресса*
+3️⃣ Отслеживание прогресса
    • «Мои приглашения» — статус ваших приглашений
    • «Статус наград» — сколько бонусов вы заработали
 
-4️⃣ *Условия получения награды*
+4️⃣ Условия получения награды
    • Приглашённый водитель должен сделать 100 заказов
    • Награда начисляется автоматически
 
-📞 *Поддержка:* /help_admin (для администраторов)
+📞 Поддержка: /help_admin (для администраторов)
 """
     
     await query.edit_message_text(
         help_text,
-        parse_mode='Markdown',
+        parse_mode=None,
         reply_markup=get_back_keyboard()
     )
 
@@ -780,9 +780,9 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     help_text = """
-📚 *ПОЛНАЯ СПРАВКА ДЛЯ АДМИНИСТРАТОРА*
+📚 ПОЛНАЯ СПРАВКА ДЛЯ АДМИНИСТРАТОРА
 
-📊 *Основные команды:*
+📊 Основные команды:
 /stats - Общая статистика по водителям
 /top - Топ-10 водителей по заказам
 /search <фамилия или ID> - Поиск водителей
@@ -792,30 +792,30 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /recent - История обновлений сборщика
 /queue - Статистика очереди обновления
 
-🔐 *Реферальная система:*
+🔐 Реферальная система:
 /auth <телефон> - Привязать Telegram к водителю
 /invite <телефон> - Пригласить водителя
 /myreferrals - Список моих приглашений
 /referralstats - Статистика наград
 
-📞 *Управление данными:*
+📞 Управление данными:
 /export - Экспорт всех водителей в CSV
 /update_phones - Обновить номера телефонов
 /phonestatus - Статус телефонов в базе
 
-📋 *Примеры использования:*
+📋 Примеры использования:
 /search Иванов
 /status working
 /driver 123456789
 /auth +79001234567
 /invite +79009876543
 
-🔄 *Автоматические процессы:*
+🔄 Автоматические процессы:
 • Сбор данных о водителях: каждые 6 часов
 • Обновление телефонов: каждые 6 часов
 • Обработка приглашений: каждые 6 часов
 """
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+    await update.message.reply_text(help_text, parse_mode=None)
 
 
 # ========== ОСНОВНЫЕ КОМАНДЫ (ТЕКСТОВЫЕ) ==========
@@ -823,9 +823,9 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /help - справка по реферальной системе"""
     help_text = """
-🔐 *Реферальная система приглашений*
+🔐 РЕФЕРАЛЬНАЯ СИСТЕМА ПРИГЛАШЕНИЙ
 
-📋 *Доступные команды:*
+📋 Доступные команды:
 
 /auth <телефон> - Привязать Telegram к водителю
    Пример: /auth +79001234567
@@ -836,14 +836,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /myreferrals - Список моих приглашений
 /referralstats - Статистика наград
 
-📊 *Как это работает:*
+📊 Как это работает:
 1. Привяжите свой аккаунт через /auth
 2. Приглашайте новых водителей через /invite
 3. Когда приглашённый сделает 100 заказов, вы получите награду
 
-📞 *Другие команды:* /stats, /top, /search, /new, /status, /driver, /recent
+📞 Другие команды: /stats, /top, /search, /new, /status, /driver, /recent
 """
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+    await update.message.reply_text(help_text, parse_mode=None)
 
 
 async def get_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -855,24 +855,24 @@ async def get_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stats = crud.get_driver_statistics(db)
         
         response = (
-            "📈 *Статистика водителей:*\n\n"
-            f"👥 *Всего:* {stats['total']}\n"
-            f"🟢 *Работают:* {stats['working']}\n"
-            f"🟡 *Не работают:* {stats['not_working']}\n"
-            f"🔴 *Уволены:* {stats['fired']}\n"
-            f"✨ *Новые (30 дней):* {stats['new_last_30_days']}\n"
-            f"📊 *Среднее кол-во заказов:* {stats['avg_orders']}\n"
+            f"📈 СТАТИСТИКА ВОДИТЕЛЕЙ\n\n"
+            f"👥 Всего: {stats['total']}\n"
+            f"🟢 Работают: {stats['working']}\n"
+            f"🟡 Не работают: {stats['not_working']}\n"
+            f"🔴 Уволены: {stats['fired']}\n"
+            f"✨ Новые (30 дней): {stats['new_last_30_days']}\n"
+            f"📊 Среднее кол-во заказов: {stats['avg_orders']}\n"
         )
         
         last_log = crud.get_last_collection_log(db)
         if last_log:
-            response += f"\n🔄 *Последнее обновление:*\n"
+            response += f"\n🔄 ПОСЛЕДНЕЕ ОБНОВЛЕНИЕ\n"
             response += f"   • {last_log.finished_at.strftime('%Y-%m-%d %H:%M')}\n"
             response += f"   • Новых: {last_log.new_drivers_added}\n"
             response += f"   • Обновлено статусов: {last_log.status_updated}\n"
             response += f"   • Обновлено заказов: {last_log.orders_updated}\n"
         
-        await update.message.reply_text(response, parse_mode='Markdown')
+        await update.message.reply_text(response, parse_mode=None)
         
     finally:
         db.close()
@@ -892,13 +892,12 @@ async def get_top_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Нет данных о водителях")
             return
         
-        response = "🏆 *Топ-10 водителей по заказам:*\n\n"
+        response = "🏆 ТОП-10 ВОДИТЕЛЕЙ ПО ЗАКАЗАМ\n\n"
         for i, driver in enumerate(drivers, 1):
             response += f"{i}. {driver.last_name or 'Водитель'}\n"
-            response += f"   📦 Заказов: {driver.orders_count}\n"
-            response += "\n"
+            response += f"   📦 Заказов: {driver.orders_count}\n\n"
         
-        await update.message.reply_text(response[:4096], parse_mode='Markdown')
+        await update.message.reply_text(response[:4096], parse_mode=None)
         
     finally:
         db.close()
@@ -921,18 +920,18 @@ async def search_driver(update: Update, context: ContextTypes.DEFAULT_TYPE):
         drivers = crud.search_drivers(db, query_text)
         
         if not drivers:
-            await update.message.reply_text(f"Водители по запросу '{query_text}' не найдены")
+            await update.message.reply_text(f"❌ Водители по запросу '{query_text}' не найдены")
             return
         
-        response = f"🔍 *Результаты поиска:*\n\n"
+        response = f"🔍 РЕЗУЛЬТАТЫ ПОИСКА\n\n"
         for driver in drivers[:10]:
             response += f"👤 {driver.last_name or 'Без имени'}\n"
-            response += f"   🆔 ID: `{driver.driver_id[:12]}...`\n"
+            response += f"   🆔 ID: {driver.driver_id[:12]}...\n"
             response += f"   📦 Заказов: {driver.orders_count}\n"
             status_emoji = "🟢" if driver.work_status == "working" else "🟡" if driver.work_status == "not_working" else "🔴"
             response += f"   {status_emoji} Статус: {driver.work_status}\n\n"
         
-        await update.message.reply_text(response[:4096], parse_mode='Markdown')
+        await update.message.reply_text(response[:4096], parse_mode=None)
         
     finally:
         db.close()
@@ -954,13 +953,13 @@ async def get_new_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Нет новых водителей за последние 30 дней")
             return
         
-        response = "✨ *Новые водители (последние 30 дней):*\n\n"
+        response = "✨ НОВЫЕ ВОДИТЕЛИ (ПОСЛЕДНИЕ 30 ДНЕЙ)\n\n"
         for driver in drivers:
             response += f"👤 {driver.last_name or 'Без имени'}\n"
             response += f"   📅 Добавлен: {driver.created_at.strftime('%Y-%m-%d')}\n"
             response += f"   📦 Заказов: {driver.orders_count}\n\n"
         
-        await update.message.reply_text(response[:4096], parse_mode='Markdown')
+        await update.message.reply_text(response[:4096], parse_mode=None)
         
     finally:
         db.close()
@@ -986,7 +985,7 @@ async def get_drivers_by_status(update: Update, context: ContextTypes.DEFAULT_TY
         drivers = crud.get_drivers_by_status(db, status)
         
         status_emoji = "🟢" if status == "working" else "🟡" if status == "not_working" else "🔴"
-        response = f"{status_emoji} *Водители со статусом '{status}':*\n\n"
+        response = f"{status_emoji} ВОДИТЕЛИ СО СТАТУСОМ '{status}'\n\n"
         
         for driver in drivers[:20]:
             response += f"👤 {driver.last_name or 'Без имени'}\n"
@@ -997,9 +996,9 @@ async def get_drivers_by_status(update: Update, context: ContextTypes.DEFAULT_TY
             response += "\n"
         
         if len(drivers) > 20:
-            response += f"\n*... и еще {len(drivers) - 20} водителей*"
+            response += f"\n... и еще {len(drivers) - 20} водителей"
         
-        await update.message.reply_text(response[:4096], parse_mode='Markdown')
+        await update.message.reply_text(response[:4096], parse_mode=None)
         
     finally:
         db.close()
@@ -1020,32 +1019,32 @@ async def get_driver_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         driver = crud.get_driver(db, driver_id)
         
         if not driver:
-            await update.message.reply_text(f"Водитель с ID {driver_id} не найден")
+            await update.message.reply_text(f"❌ Водитель с ID {driver_id} не найден")
             return
         
         status_emoji = "🟢" if driver.work_status == "working" else "🟡" if driver.work_status == "not_working" else "🔴"
         
         response = (
-            f"👤 *Информация о водителе:*\n\n"
-            f"*Фамилия:* {driver.last_name or 'Не указана'}\n"
-            f"*ID:* `{driver.driver_id}`\n"
-            f"*Статус:* {status_emoji} {driver.work_status}\n"
-            f"*Заказов:* 📦 {driver.orders_count}\n"
-            f"*Баланс:* 💰 {driver.balance} {driver.currency}\n"
-            f"*Текущий статус:* {driver.current_status}\n"
+            f"👤 ИНФОРМАЦИЯ О ВОДИТЕЛЕ\n\n"
+            f"Фамилия: {driver.last_name or 'Не указана'}\n"
+            f"ID: {driver.driver_id}\n"
+            f"Статус: {status_emoji} {driver.work_status}\n"
+            f"Заказов: 📦 {driver.orders_count}\n"
+            f"Баланс: 💰 {driver.balance} {driver.currency}\n"
+            f"Текущий статус: {driver.current_status}\n"
         )
         
         if driver.created_date:
-            response += f"*Дата регистрации:* {driver.created_date[:10]}\n"
+            response += f"Дата регистрации: {driver.created_date[:10]}\n"
         
         if driver.last_transaction_date:
-            response += f"*Последняя транзакция:* {driver.last_transaction_date[:10]}\n"
+            response += f"Последняя транзакция: {driver.last_transaction_date[:10]}\n"
         
         if driver.last_updated:
             days_ago = (datetime.utcnow() - driver.last_updated).days
-            response += f"*Последнее обновление:* {days_ago} дней назад\n"
+            response += f"Последнее обновление: {days_ago} дней назад\n"
         
-        await update.message.reply_text(response, parse_mode='Markdown')
+        await update.message.reply_text(response, parse_mode=None)
         
     finally:
         db.close()
@@ -1061,10 +1060,10 @@ async def get_recent_updates(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text("Нет данных об обновлениях")
             return
         
-        response = "🔄 *Последние обновления:*\n\n"
+        response = "🔄 ПОСЛЕДНИЕ ОБНОВЛЕНИЯ\n\n"
         for log in logs:
             status_emoji = "✅" if log.status == "success" else "❌"
-            response += f"{status_emoji} *{log.finished_at.strftime('%Y-%m-%d %H:%M')}*\n"
+            response += f"{status_emoji} {log.finished_at.strftime('%Y-%m-%d %H:%M')}\n"
             if log.status == "success":
                 response += f"   ✨ Новых: {log.new_drivers_added}\n"
                 response += f"   🔄 Обновлено статусов: {log.status_updated}\n"
@@ -1073,7 +1072,7 @@ async def get_recent_updates(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 response += f"   ⚠️ Ошибка: {log.error_message}\n"
             response += "\n"
         
-        await update.message.reply_text(response, parse_mode='Markdown')
+        await update.message.reply_text(response, parse_mode=None)
         
     finally:
         db.close()
@@ -1090,7 +1089,7 @@ async def queue_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stats = crud.get_queue_stats(db)
         
         response = (
-            "📋 *Статистика очереди обновления:*\n\n"
+            f"📋 СТАТИСТИКА ОЧЕРЕДИ ОБНОВЛЕНИЯ\n\n"
             f"👥 Всего в очереди: {stats['total']}\n"
             f"⭐ Высокий приоритет (новые): {stats['high_priority']}\n"
             f"📊 Обычный приоритет: {stats['low_priority']}\n"
@@ -1099,7 +1098,7 @@ async def queue_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"сначала обновляются водители, которые дольше всех ждали"
         )
         
-        await update.message.reply_text(response, parse_mode='Markdown')
+        await update.message.reply_text(response, parse_mode=None)
         
     finally:
         db.close()
@@ -1270,7 +1269,7 @@ async def update_phones(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📞 Обновлено: {result['updated']}\n"
                 f"❌ Ошибок: {len(result['errors'])}\n\n"
                 f"Следующее автоматическое обновление через 6 часов",
-                parse_mode='Markdown'
+                parse_mode=None
             )
         except Exception as e:
             await update.message.reply_text(f"❌ Ошибка: {str(e)}")
@@ -1300,14 +1299,14 @@ async def phone_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_time = last.phone_updated_at.strftime('%Y-%m-%d %H:%M') if last and last.phone_updated_at else 'никогда'
         
         await update.message.reply_text(
-            f"📊 *Статус телефонов водителей:*\n"
+            f"📊 СТАТУС ТЕЛЕФОНОВ ВОДИТЕЛЕЙ\n"
             f"👥 Всего: {total}\n"
             f"📞 С телефонами: {with_phone}\n"
             f"❌ Без телефонов: {without_phone}\n"
             f"📈 Прогресс: {round(with_phone/total*100, 1)}%\n"
             f"🕐 Последнее обновление: {last_time}\n\n"
             f"Автоматическое обновление: каждые 6 часов",
-            parse_mode='Markdown'
+            parse_mode=None
         )
     finally:
         db.close()
@@ -1378,14 +1377,14 @@ async def revoke_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        "⚠️ *Отзыв согласия на обработку данных*\n\n"
+        "⚠️ ОТЗЫВ СОГЛАСИЯ НА ОБРАБОТКУ ДАННЫХ\n\n"
         "Вы уверены, что хотите отозвать согласие?\n\n"
         "После отзыва:\n"
         "• Ваш аккаунт будет отвязан от бота\n"
         "• Ваши реферальные приглашения станут неактивными\n"
         "• Вы не сможете получать новые награды\n\n"
         "Вы можете снова дать согласие через /start в любой момент",
-        parse_mode='Markdown',
+        parse_mode=None,
         reply_markup=reply_markup
     )
 
@@ -1408,15 +1407,15 @@ async def handle_revoke_consent(update: Update, context: ContextTypes.DEFAULT_TY
                 db.commit()
             
             await query.edit_message_text(
-                "✅ *Согласие отозвано.*\n\n"
+                "✅ СОГЛАСИЕ ОТОЗВАНО\n\n"
                 "Ваши данные были отвязаны от бота.\n\n"
                 "Если вы захотите снова пользоваться ботом, нажмите /start и дайте новое согласие.",
-                parse_mode='Markdown'
+                parse_mode=None
             )
         finally:
             db.close()
     else:
         await query.edit_message_text(
             "Операция отменена. Ваше согласие на обработку данных остаётся в силе.",
-            parse_mode='Markdown'
+            parse_mode=None
         )
